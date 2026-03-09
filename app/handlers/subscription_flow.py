@@ -34,7 +34,37 @@ async def subscribe_cmd(message: Message):
             resp = await client.post(
                 f"{cfg.public_base_url}/stripe/create_checkout",
                 json={"tg_user_id": message.from_user.id},
-                timeout=20,
+            )
+            data = resp.json()
+            stripe_url = data.get("url")
+
+            # YooKassa checkout link (если есть endpoint)
+            yk_url = None
+            try:
+                yk_resp = await client.post(
+                    f"{cfg.public_base_url}/yookassa/create_payment",
+                    json={"tg_user_id": message.from_user.id},
+                )
+                yk_data = yk_resp.json()
+                yk_url = yk_data.get("url")
+            except Exception:
+                yk_url = None
+
+        # 👇 ВАЖНО: описание тарифа (это нужно для модерации YooKassa)
+        await message.answer(
+            "💳 Подписка PASO\n\n"
+            "Стоимость: 555 ₽ / месяц\n\n"
+            "Подписка дает доступ к сервису PASO:\n"
+            "• создание заявок на отправку посылок\n"
+            "• поиск перевозчиков\n"
+            "• отклики на заявки\n"
+            "• доступ к сообществу перевозчиков\n\n"
+            "После оплаты подписка активируется автоматически.",
+            reply_markup=kb_payments(stripe_url, yk_url),
+        )
+
+    except Exception as e:
+        await message.answer(f"Ошибка создания платежа: {e}")                timeout=20,
             )
             resp.raise_for_status()
             stripe_data = resp.json()
