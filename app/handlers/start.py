@@ -61,13 +61,21 @@ async def start(m: Message, session: AsyncSession, command: CommandObject):
         )
 
         # вызываем тот же handler
-        await start_request(fake_callback, state=None)  # если потребуется state — скажи
+        await start_request(fake_callback, state=None)
 
         return
 
     # обычный старт
     await m.answer(
-        "PASO — сообщество для передачи товаров между странами.\n\n"
+        "📦 PASO — сервис передачи посылок между городами и странами.\n\n"
+        "Если кто-то уже едет/летит в нужный город или страну, "
+        "он может взять вашу посылку и передать её получателю.\n\n"
+        "Через сервис можно отправить:\n"
+        "• документы\n"
+        "• косметику\n"
+        "• подарки\n"
+        "• личные вещи\n\n"
+        "Для использования сервиса требуется подписка.\n\n"
         "Что вы хотите сделать?",
         reply_markup=kb_main(),
     )
