@@ -34,7 +34,68 @@ async def activate_subscription(
     source: str,
 ) -> Subscription:
     """
-    Создаёт/продлевает подписку:
+    Активирует подписку пользователю.
+
+    Если активная подписка уже есть — она продлевается.
+    source: stripe | yookassa | admin
+    """
+
+    now = datetime.utcnow()
+
+    # ищем текущую активную подписку
+    q = (
+        select(Subscription)
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.status == "active",
+            Subscription.expires_at > now,
+        )
+        .order_by(Subscription.expires_at.desc())
+        .limit(1)
+    )
+
+    existing_sub = (await session.execute(q)).scalar_one_or_none()
+
+    if existing_sub:
+        # продлеваем подписку
+        existing_sub.expires_at = existing_sub.expires_at + timedelta(days=duration_days)
+        existing_sub.source = source
+        await session.commit()
+        await session.refresh(existing_sub)
+        return existing_sub
+
+    # создаём новую подписку
+    new_sub = Subscription(
+        user_id=user_id,
+        status="active",
+        started_at=now,
+        expires_at=now + timedelta(days=duration_days),
+        source=source,
+    )
+
+    session.add(new_sub)
+    await session.commit()
+    await session.refresh(new_sub)
+
+    return new_sub
+
+
+async def get_active_subscription(session: AsyncSession, user_id: int) -> Subscription | None:
+    """Возвращает активную подписку пользователя."""
+    now = datetime.utcnow()
+
+    q = (
+        select(Subscription)
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.status == "active",
+            Subscription.expires_at > now,
+        )
+        .order_by(Subscription.expires_at.desc())
+        .limit(1)
+    )
+
+    return (await session.execute(q)).scalar_one_or_none()    Создаёт/продлевает подписку:
     - если активная есть → продлеваем от max(now, expires_at)
     - иначе → начинаем от now
     """
