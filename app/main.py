@@ -7,7 +7,12 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from .config import load_config
-from .db import make_engine, make_session_factory, Base
+from .db import (
+    make_engine,
+    make_session_factory,
+    Base,
+    init_global_db,
+)
 from .handlers import all_routers
 
 
@@ -48,34 +53,40 @@ async def main():
 
     cfg = load_config()
 
+    # 🔎 Логируем строку подключения
+    print("DATABASE_URL =", cfg.database_url, flush=True)
+
+    # Инициализируем глобальную БД
+    init_global_db(cfg.database_url)
+
+    # Создаём engine и session factory
     engine = make_engine(cfg.database_url)
     session_factory = make_session_factory(engine)
 
+    # Создаём таблицы если их нет
     await create_tables(engine)
 
     bot = Bot(
         token=cfg.bot_token,
         default=DefaultBotProperties(parse_mode="HTML"),
     )
+
     dp = Dispatcher(storage=MemoryStorage())
 
-    # ✅ ВАЖНО: подключаем сессию в каждый апдейт
+    # middleware БД
     dp.update.middleware(session_middleware(session_factory))
 
-    # ❗️Пока не включаем paywall middleware, чтобы не ломало запуск
-    # Если он нужен — включим позже, когда файл middleware точно готов.
-    # from app.middlewares.subscription_gate import SubscriptionGateMiddleware
-    # dp.update.middleware(SubscriptionGateMiddleware())
-
+    # подключаем роутеры
     for router in all_routers():
         dp.include_router(router)
 
     await on_startup(bot)
 
-    # важно: сбросить webhook, иначе polling может "молчать"
+    # важно для polling
     await bot.delete_webhook(drop_pending_updates=True)
 
     print("✅ Bot started (polling)...", flush=True)
+
     await dp.start_polling(bot)
 
 
