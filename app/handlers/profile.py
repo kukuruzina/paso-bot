@@ -47,7 +47,7 @@ async def render_profile(
     username = f"@{user.tg_username}" if user.tg_username else "—"
     name = " ".join([x for x in [user.first_name, user.last_name] if x]) or "—"
 
-    # 2) Subscription (latest active by expires_at)
+    # 2) Subscription
     res = await session.execute(
         select(Subscription)
         .where(
@@ -61,10 +61,12 @@ async def render_profile(
 
     sub_text = "❌ Подписка: нет активной\n💳 Оформить: /subscribe"
     now = datetime.utcnow()
+
     if sub and sub.expires_at and sub.expires_at > now:
         days_left = (sub.expires_at - now).days
         if days_left < 0:
             days_left = 0
+
         sub_text = (
             "✅ Подписка: активна\n"
             f"📅 До: {_fmt_date(sub.expires_at)}\n"
@@ -79,10 +81,9 @@ async def render_profile(
 
     premium_badge = "👑 PREMIUM перевозчик" if getattr(user, "is_premium_carrier", False) else "—"
 
-    # 4) Completed deals count
+    # 4) Completed deals
     accepted = MatchStatus.accepted
 
-    # как заказчик
     res = await session.execute(
         select(func.count(Match.id))
         .join(Request, Request.id == Match.request_id)
@@ -93,7 +94,6 @@ async def render_profile(
     )
     deals_as_customer = int(res.scalar() or 0)
 
-    # как исполнитель
     res = await session.execute(
         select(func.count(Match.id))
         .join(Offer, Offer.id == Match.offer_id)
@@ -106,7 +106,7 @@ async def render_profile(
 
     deals_total = deals_as_customer + deals_as_carrier
 
-    # 5) “Опыт” по ценным/наличным/докам
+    # 5) Experience stats
     valuable = getattr(user, "valuable_count", 0) or 0
     cash = getattr(user, "cash_count", 0) or 0
     docs = getattr(user, "docs_count", 0) or 0
@@ -117,7 +117,7 @@ async def render_profile(
         max_value_text = f"до {max_value}€"
 
     text = (
-        "👤 Профиль PASO\n\n"
+        "👤 Профиль PASО\n\n"
         f"Имя: {name}\n"
         f"Username: {username}\n\n"
         f"⭐️ Рейтинг: {rating_text}\n"
@@ -132,13 +132,16 @@ async def render_profile(
     )
 
     active = await has_active_subscription(session, user.id)
+
     if active:
         await answer(text, reply_markup=kb_join_group())
     else:
         await answer(text)
 
 
+# ========================
 # Команда /profile
+# ========================
 @router.message(Command("profile"))
 async def profile_cmd(message: Message, session: AsyncSession):
     await render_profile(
@@ -148,7 +151,21 @@ async def profile_cmd(message: Message, session: AsyncSession):
     )
 
 
-# Кнопка "👤 Профиль"
+# ========================
+# Кнопка меню "👤 Профиль"
+# ========================
+@router.message(F.text.in_(["👤 Профиль", "Профиль"]))
+async def profile_menu(message: Message, session: AsyncSession):
+    await render_profile(
+        tg_user_id=message.from_user.id,
+        answer=message.answer,
+        session=session,
+    )
+
+
+# ========================
+# Inline callback (если используется)
+# ========================
 @router.callback_query(F.data == "go:profile")
 async def profile_cb(cq: CallbackQuery, session: AsyncSession):
     await render_profile(
@@ -159,11 +176,14 @@ async def profile_cb(cq: CallbackQuery, session: AsyncSession):
     await cq.answer()
 
 
+# ========================
 # Кнопка "🚪 Войти в группу"
+# ========================
 @router.callback_query(F.data == "go:join_group")
 async def join_group_cb(cq: CallbackQuery, session: AsyncSession):
     res = await session.execute(select(User).where(User.tg_user_id == cq.from_user.id))
     user = res.scalar_one_or_none()
+
     if not user:
         await cq.answer("Нажмите /start", show_alert=True)
         return
@@ -173,10 +193,13 @@ async def join_group_cb(cq: CallbackQuery, session: AsyncSession):
         return
 
     cfg = load_config()
+
     if not getattr(cfg, "paso_group_id", None):
         await cq.answer("PASO_GROUP_ID не настроен", show_alert=True)
         return
 
     link = await create_invite_link(cq.bot, cfg.paso_group_id)
+
     await cq.message.answer(f"🚪 Ваша ссылка для входа в группу PASO:\n{link}")
+
     await cq.answer()
