@@ -1,0 +1,65 @@
+from aiogram import Router
+from aiogram.filters import Command
+from aiogram import F
+from aiogram.types import Message, CallbackQuery
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+
+from ..models import User, Match
+from ..services.subscriptions import has_active_subscription
+
+router = Router()
+
+
+@router.message(Command("profile"))
+async def profile_cmd(message: Message, session: AsyncSession):
+    q = select(User).where(User.tg_user_id == message.from_user.id)
+    user = (await session.execute(q)).scalar_one_or_none()
+
+    if not user:
+        await message.answer("Сначала нажмите /start")
+        return
+
+    text = (
+        "👤 Профиль PASO\n\n"
+        f"Имя: {message.from_user.first_name}\n"
+        f"Username: @{message.from_user.username}\n\n"
+        "⭐ Рейтинг:\n"
+        "✔ Сделок (accepted): 0\n"
+        "• как заказчик: 0\n"
+        "• как перевозчик: 0\n\n"
+        "—\n"
+        "💎 Ценные посылки: 0 (макс: —)\n"
+        "💵 Наличные: 0\n"
+        "📄 Документы: 0\n\n"
+    )
+
+    if await has_active_subscription(session, user.id):
+        text += "✅ Подписка: активна"
+    else:
+        text += "❌ Подписка: нет активной\n💳 Оформить: /subscribe"
+
+    await message.answer(text)
+
+
+@router.callback_query(F.data == "go:profile")
+async def open_profile(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.answer("/profile")
+
+
+@router.callback_query(F.data == "go:subscribe")
+async def open_subscribe(callback: CallbackQuery):
+    await callback.answer()
+
+    await callback.message.answer(
+        "💳 Подписка PASO PRO\n\n"
+        "Что входит:\n"
+        "• доступ к закрытым заявкам\n"
+        "• отклики на заявки\n"
+        "• доступ к сообществу перевозчиков\n\n"
+        "После оплаты подписка активируется автоматически.\n\n"
+        "Напишите:\n"
+        "/subscribe"
+    )
+

@@ -96,8 +96,8 @@ async def get_active_subscription(session: AsyncSession, user_id: int) -> Subscr
     )
 
     return (await session.execute(q)).scalar_one_or_none()    Создаёт/продлевает подписку:
-    # если активная есть → продлеваем от max(now, expires_at)
-    # иначе → начинаем от now
+    - если активная есть → продлеваем от max(now, expires_at)
+    - иначе -> начинаем от now
     """
     now = datetime.utcnow()
 

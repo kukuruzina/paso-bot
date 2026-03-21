@@ -1,0 +1,11 @@
+[0;1;32m●[0m paso-bot.service - PASO Telegram Bot
+     Loaded: loaded (]8;;file://6846941-pa043937.twc1.net/etc/systemd/system/paso-bot.service/etc/systemd/system/paso-bot.service]8;;; [0;1;32menabled[0m; preset: [0;1;32menabled[0m)
+     Active: [0;1;32mactive (running)[0m since Thu 2026-03-12 12:11:57 UTC; 19ms ago
+   Main PID: 355673 (python)
+      Tasks: 1 (limit: 1107)
+     Memory: 612.0K (peak: 840.0K)
+        CPU: 5ms
+     CGroup: /system.slice/paso-bot.service
+             └─[0;38;5;245m355673 /root/paso-bot/.venv/bin/python -m app.main[0m
+
+Mar 12 12:11:57 6846941-pa043937.twc1.net systemd[1]: Started paso-bot.service - PASO Telegram Bot.
