@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.db import get_session, engine  # проверь, что у тебя есть get_session; если нет — скажи, дам адаптацию под твой db.py
 from app.models import User, Subscription
-from app.config import load_config
+from config import load_config
 
 cfg = load_config()
 

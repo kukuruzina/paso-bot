@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Request, Offer, Match, User
-from .enums import CarryType, MatchStatus, RowStatus
+from app.models import Request, Offer, Match, User
+from app.enums import CarryType, MatchStatus, RowStatus
 
+
+# ---------- WEIGHT ----------
 
 WEIGHT_RANK = {
     "lt1": 1,
@@ -19,6 +21,8 @@ WEIGHT_RANK = {
 def weight_covers(offer_band: str, req_band: str) -> bool:
     return WEIGHT_RANK.get(offer_band, 0) >= WEIGHT_RANK.get(req_band, 0)
 
+
+# ---------- COMPATIBILITY ----------
 
 def baggage_compatible(req_carry: str, off_baggage: str) -> bool:
     if req_carry == CarryType.any:
@@ -50,6 +54,8 @@ def transit_ok(req: Request, off: Offer) -> bool:
     return True
 
 
+# ---------- SCORE ----------
+
 def calc_score(req: Request, off: Offer, rt: str, offer_user: User | None) -> int:
     score = 0
 
@@ -78,16 +84,26 @@ def calc_score(req: Request, off: Offer, rt: str, offer_user: User | None) -> in
     if getattr(req, "transit_allowed", True) and bool(getattr(off, "transit_country", None)):
         score += 3
 
-    # ⭐ бонус за рейтинг
+    # ⭐ рейтинг
     if offer_user and offer_user.rating_count:
         score += int(offer_user.rating_avg * 2)
 
-    # 👑 бонус за premium
+    # 👑 premium
     if offer_user and offer_user.is_premium_carrier:
         score += 15
 
+    # 🆕 свежесть заявки
+    if req.created_at:
+        freshness = (datetime.utcnow() - req.created_at).days
+        if freshness <= 1:
+            score += 3
+
     return score
 
+
+# =========================================================
+# 📦 REQUEST → OFFERS
+# =========================================================
 
 async def find_matches_for_request(
     session: AsyncSession,
@@ -96,7 +112,7 @@ async def find_matches_for_request(
     top_n: int,
 ) -> list[Match]:
 
-    print("🔥 MATCHING STARTED", request_id)
+    print("🔥 MATCHING REQUEST STARTED", request_id)
 
     req = await session.get(Request, request_id)
     if not req or req.status != RowStatus.active:
@@ -114,7 +130,7 @@ async def find_matches_for_request(
 
         offer_user = await session.get(User, off.user_id)
 
-        # 🔎 PREMIUM фильтр
+        # PREMIUM фильтр
         if getattr(req, "requires_premium", False):
             if not offer_user or not offer_user.is_premium_carrier:
                 continue
@@ -141,7 +157,7 @@ async def find_matches_for_request(
         score = calc_score(req, off, rt, offer_user)
         candidates.append((off, score))
 
-        print("✅ Candidate:", off.id, "score=", score)
+        print("✅ Candidate offer:", off.id, "score=", score)
 
     candidates.sort(key=lambda x: x[1], reverse=True)
     candidates = candidates[:top_n]
@@ -159,11 +175,96 @@ async def find_matches_for_request(
         try:
             await session.flush()
             created_matches.append(m)
-            print("🎯 Match created with offer:", off.id)
         except Exception:
             await session.rollback()
             continue
 
     await session.commit()
-    print("MATCHING DONE. Created:", len(created_matches))
+    print("MATCHING REQUEST DONE:", len(created_matches))
+
     return created_matches
+
+
+# =========================================================
+# ✈️ OFFER → REQUESTS
+# =========================================================
+
+async def find_matches_for_offer(
+    session: AsyncSession,
+    offer_id: int,
+    window_days: int,
+    top_n: int,
+) -> list[Match]:
+
+    print("🔥 MATCHING OFFER STARTED", offer_id)
+
+    off = await session.get(Offer, offer_id)
+    if not off:  # ← важно (чтобы работало для draft)
+        print("❌ Offer not found")
+        return []
+
+    offer_user = await session.get(User, off.user_id)
+
+    q = select(Request).where(Request.status == RowStatus.active)
+    requests = (await session.execute(q)).scalars().all()
+
+    print("Found requests:", len(requests))
+
+    candidates: list[tuple[Request, int]] = []
+
+    for req in requests:
+
+        # 🎯 категории (если есть multi-select)
+        if hasattr(off, "categories") and off.categories:
+            if req.category not in off.categories:
+                continue
+
+        rt = route_type(req, off)
+        if rt is None:
+            continue
+
+        if not transit_ok(req, off):
+            continue
+
+        if req.delivery_date_to and off.trip_date > req.delivery_date_to:
+            continue
+
+        if off.trip_date < date.today() - timedelta(days=window_days):
+            continue
+
+        if not baggage_compatible(req.carry_type, off.baggage_type):
+            continue
+
+        if not weight_covers(off.capacity_band, req.weight_band):
+            continue
+
+        score = calc_score(req, off, rt, offer_user)
+        candidates.append((req, score))
+
+        print("✅ Candidate request:", req.id, "score=", score)
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    candidates = candidates[:top_n]
+
+    created_matches: list[Match] = []
+
+    for req, score in candidates:
+        m = Match(
+            request_id=req.id,
+            offer_id=off.id,
+            score=score,
+            status=MatchStatus.proposed,
+        )
+        session.add(m)
+        try:
+            await session.flush()
+            created_matches.append(m)
+        except Exception:
+            await session.rollback()
+            continue
+
+    await session.commit()
+    print("MATCHING OFFER DONE:", len(created_matches))
+
+    return created_matches
+

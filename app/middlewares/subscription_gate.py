@@ -10,13 +10,9 @@ from sqlalchemy import select
 
 
 class SubscriptionGateMiddleware(BaseMiddleware):
-    """
-    Пример: блокируем только часть действий без подписки.
-    Сейчас — просто пример, можно расширять.
-    """
 
     async def __call__(self, handler, event: TelegramObject, data: dict):
-        # пропускаем не Message/CallbackQuery
+
         if not isinstance(event, (Message, CallbackQuery)):
             return await handler(event, data)
 
@@ -24,32 +20,63 @@ class SubscriptionGateMiddleware(BaseMiddleware):
         if not tg_user_id:
             return await handler(event, data)
 
-        # тут можно сделать allowlist команд типа /start /profile /subscribe и т.д.
         text = ""
         if isinstance(event, Message):
             text = event.text or ""
         elif isinstance(event, CallbackQuery):
             text = event.data or ""
 
-        allow_prefixes = ("/start", "/profile", "/subscribe", "go:profile", "go:subscribe")
+        # ✅ ВСЁ, ЧТО НУЖНО РАЗРЕШИТЬ БЕЗ ПОДПИСКИ
+
+        allow_prefixes = (
+            "/start",
+            "/profile",
+            "/subscribe",
+            "go:profile",
+            "go:req",
+            "go:off",
+
+            # request flow
+            "cat:",
+            "w:",
+            "c:",
+            "d:",
+            "req:confirm",
+
+            # offer flow
+            "date:",
+            "cal:",
+            "off:confirm_rules",
+        )
+
         if any(text.startswith(x) for x in allow_prefixes):
             return await handler(event, data)
 
-        # проверка подписки
+        # 🔒 остальное — только с подпиской
+
         async with get_session() as session:
-            res = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+            res = await session.execute(
+                select(User).where(User.tg_user_id == tg_user_id)
+            )
             user = res.scalar_one_or_none()
+
             if not user:
                 return await handler(event, data)
 
             active = await has_active_subscription(session, user.id)
+
             if active:
                 return await handler(event, data)
 
-        # если нет подписки — блок
+        # ❌ блок
+
         if isinstance(event, Message):
             await event.answer("🔒 Доступ по подписке. Оформить: /subscribe")
         else:
-            await event.answer("🔒 Доступ по подписке. Оформить: /subscribe", show_alert=True)
+            await event.answer(
+                "🔒 Доступ по подписке. Оформить: /subscribe",
+                show_alert=True
+            )
 
         return
+

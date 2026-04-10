@@ -29,23 +29,45 @@ class OfferFSM(StatesGroup):
     confirm_rules = State()
 
 
-# ---------- RULES ----------
+# ---------- KEYBOARDS ----------
 
-RULES_TEXT_OFFER = (
-    "Перед подтверждением, пожалуйста, ознакомьтесь с правилами и примите их:\n\n"
-    "• Вы перевозите товары добровольно и на свой риск\n"
-    "• Убедитесь, что товар разрешён к перевозке и ввозу/вывозу\n"
-    "• Не берите посылки «вслепую» — уточняйте состав/упаковку\n"
-    "• Условия и вознаграждение обсуждаются напрямую в чате\n"
-    "• PASO не участвует в сделке и не удерживает средства\n"
-    "• Нарушение правил или жалобы ведут к удалению из сервиса"
-)
+def kb_calendar(offset_days: int = 0):
+    print("🔥 NEW CALENDAR LOADED")
+
+    b = InlineKeyboardBuilder()
+
+    today = date.today() + timedelta(days=offset_days)
+
+    for i in range(7):
+        d = today + timedelta(days=i)
+        b.button(
+            text=d.strftime("%d.%m"),
+            callback_data=f"date:{d.isoformat()}",
+        )
+
+    b.button(text="➡️ Следующая неделя", callback_data=f"cal:next:{offset_days+7}")
+    b.button(text="📅 Через 2 недели", callback_data="date:plus14")
+    b.button(text="📅 Через месяц", callback_data="date:plus30")
+
+    b.adjust(3)
+    return b.as_markup()
 
 
 def kb_confirm_offer():
     b = InlineKeyboardBuilder()
     b.button(text="✅ Принимаю правила", callback_data="off:confirm_rules")
     return b.as_markup()
+
+
+# ---------- RULES ----------
+
+RULES_TEXT_OFFER = (
+    "📋 Правила:\n\n"
+    "• Перевозка на ваш риск\n"
+    "• Проверяйте содержимое\n"
+    "• Запрещённые вещи нельзя\n"
+    "• Всё обсуждается в чате\n"
+)
 
 
 # ---------- helpers ----------
@@ -61,10 +83,9 @@ async def get_user(session: AsyncSession, tg_user_id: int) -> User | None:
 async def start_offer(cq: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(OfferFSM.from_city)
+
     await cq.message.answer(
-        "✈️ Планирую поездку и могу взять\n\n"
-        "1/5 Откуда вы выезжаете/вылетаете?\n"
-        "Напишите город (например: Берлин)."
+        "✈️ Предложить поездку\n\n1/5 Откуда выезжаете?"
     )
     await cq.answer()
 
@@ -75,91 +96,76 @@ async def start_offer(cq: CallbackQuery, state: FSMContext):
 async def step_from_city(m: Message, state: FSMContext):
     city = norm(m.text)
     if not city:
-        await m.answer("Введите город (например: Берлин).")
+        await m.answer("Введите город")
         return
 
     await state.update_data(from_city=city)
     await state.set_state(OfferFSM.to_city)
-    await m.answer(
-        "2/5 Куда едете?\n"
-        "Напишите город (например: Москва)."
-    )
+
+    await m.answer("2/5 Куда едете?")
 
 
 @router.message(OfferFSM.to_city)
 async def step_to_city(m: Message, state: FSMContext):
     city = norm(m.text)
     if not city:
-        await m.answer("Введите город (например: Москва).")
+        await m.answer("Введите город")
         return
 
     await state.update_data(to_city=city)
     await state.set_state(OfferFSM.trip_date)
+
     await m.answer(
-        "3/5 Когда поездка?\n\n"
-        "1 — укажу точную дату (YYYY-MM-DD)\n"
-        "2 — в течение 2 недель\n"
-        "3 — в течение месяца\n"
-        "4 — не уверен(а)\n\n"
-        "Ответьте цифрой 1–4."
+        "3/5 Когда поездка?",
+        reply_markup=kb_calendar()
     )
 
 
-@router.message(OfferFSM.trip_date)
-async def step_trip_date(m: Message, state: FSMContext):
-    txt = (m.text or "").strip()
+# ---------- CALENDAR ----------
+
+@router.callback_query(OfferFSM.trip_date, F.data.startswith("cal:"))
+async def calendar_nav(cq: CallbackQuery, state: FSMContext):
+    _, _, offset = cq.data.split(":")
+    offset = int(offset)
+
+    await cq.message.edit_reply_markup(
+        reply_markup=kb_calendar(offset)
+    )
+    await cq.answer()
+
+
+@router.callback_query(OfferFSM.trip_date, F.data.startswith("date:plus"))
+async def step_date_plus(cq: CallbackQuery, state: FSMContext):
+    val = cq.data.split(":")[1]
+
     today = date.today()
 
-    if txt == "1":
-        await m.answer("Введите дату поездки в формате YYYY-MM-DD (например: 2026-03-01).")
-        # остаёмся в OfferFSM.trip_date, но пометим что ждём дату
-        await state.update_data(_await_exact_date=True)
-        return
-
-    # если ждём дату и пришла строка вида 2026-03-01
-    data = await state.get_data()
-    if data.get("_await_exact_date"):
-        try:
-            y, mm, dd = txt.split("-")
-            d = date(int(y), int(mm), int(dd))
-        except Exception:
-            await m.answer("Не похоже на дату. Пример: 2026-03-01")
-            return
-
-        await state.update_data(trip_date=d.isoformat(), _await_exact_date=False)
-        await state.set_state(OfferFSM.capacity_band)
-        await m.answer(
-            "4/5 Сколько свободного места есть?\n"
-            "1 — до 1 кг\n"
-            "2 — 1–3 кг\n"
-            "3 — 3–5 кг\n"
-            "4 — 5+ кг\n\n"
-            "Ответьте цифрой 1–4."
-        )
-        return
-
-    # варианты 2–4
-    mp = {
-        "2": today + timedelta(days=14),
-        "3": today + timedelta(days=30),
-        "4": today + timedelta(days=60),
-    }
-    d = mp.get(txt)
-    if not d:
-        await m.answer("Введите цифру 1–4.")
+    if val == "plus14":
+        d = today + timedelta(days=14)
+    elif val == "plus30":
+        d = today + timedelta(days=30)
+    else:
         return
 
     await state.update_data(trip_date=d.isoformat())
     await state.set_state(OfferFSM.capacity_band)
-    await m.answer(
-        "4/5 Сколько свободного места есть?\n"
-        "1 — до 1 кг\n"
-        "2 — 1–3 кг\n"
-        "3 — 3–5 кг\n"
-        "4 — 5+ кг\n\n"
-        "Ответьте цифрой 1–4."
-    )
 
+    await cq.message.answer("4/5 Сколько веса можете взять?")
+    await cq.answer()
+
+
+@router.callback_query(OfferFSM.trip_date, F.data.startswith("date:"))
+async def step_date(cq: CallbackQuery, state: FSMContext):
+    val = cq.data.split(":")[1]
+
+    await state.update_data(trip_date=val)
+    await state.set_state(OfferFSM.capacity_band)
+
+    await cq.message.answer("4/5 Сколько веса можете взять?")
+    await cq.answer()
+
+
+# ---------- CAPACITY ----------
 
 @router.message(OfferFSM.capacity_band)
 async def step_capacity(m: Message, state: FSMContext):
@@ -176,14 +182,16 @@ async def step_capacity(m: Message, state: FSMContext):
 
     await state.update_data(capacity_band=cap.value)
     await state.set_state(OfferFSM.baggage_type)
+
     await m.answer(
-        "5/5 Куда можно положить?\n"
-        "1 — только ручная кладь\n"
-        "2 — можно в багаж\n"
-        "3 — без разницы\n\n"
-        "Ответьте цифрой 1–3."
+        "5/5 Тип перевозки:\n"
+        "1 — ручная кладь\n"
+        "2 — багаж\n"
+        "3 — не важно"
     )
 
+
+# ---------- BAGGAGE ----------
 
 @router.message(OfferFSM.baggage_type)
 async def step_baggage(m: Message, state: FSMContext):
@@ -199,21 +207,19 @@ async def step_baggage(m: Message, state: FSMContext):
 
     await state.update_data(baggage_type=bt.value)
     await state.set_state(OfferFSM.confirm_rules)
+
     await m.answer(RULES_TEXT_OFFER, reply_markup=kb_confirm_offer())
 
 
-@router.message(OfferFSM.confirm_rules)
-async def confirm_need_button(m: Message):
-    await m.answer("Нажмите кнопку ✅ «Принимаю правила».")
-
+# ---------- CONFIRM ----------
 
 @router.callback_query(OfferFSM.confirm_rules, F.data == "off:confirm_rules")
 async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSession):
+
     user = await get_user(session, cq.from_user.id)
     if not user:
         await cq.message.answer("Ошибка пользователя. Нажмите /start.")
         await state.clear()
-        await cq.answer()
         return
 
     data = await state.get_data()
@@ -225,16 +231,9 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
         to_country="Russia",
         to_city=data.get("to_city"),
         trip_date=date.fromisoformat(data["trip_date"]),
-        transit_country=None,
-        transit_city=None,
         capacity_band=data["capacity_band"],
         baggage_type=data["baggage_type"],
-
-        # ВАЖНО: чтобы не падало из-за NOT NULL constraint (по твоей ошибке)
         price_mode="discuss",
-        price_amount=None,
-        price_currency=None,
-
         status=RowStatus.active,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
@@ -242,11 +241,12 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     session.add(offer)
     await session.commit()
-    await session.refresh(offer)
 
     await state.clear()
+
     await cq.message.answer(
-        "✅ Поездка сохранена. Теперь я смогу подбирать вам подходящие заявки.",
+        "✅ Поездка сохранена",
         reply_markup=kb_main(),
     )
     await cq.answer()
+

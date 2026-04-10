@@ -17,7 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .db import Base
+from app.db import Base
 
 
 # =========================================================
@@ -72,6 +72,32 @@ class Subscription(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped[User] = relationship()
+
+
+# =========================================================
+# PAYMENTS (платежи)
+# =========================================================
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
+
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)  # stripe / yookassa
+    amount: Mapped[int] = mapped_column(nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="RUB")
+
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / success / failed
+
+    external_id: Mapped[str | None] = mapped_column(String(128))  # id платежа в stripe/yk
+
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
     user: Mapped[User] = relationship()
 
@@ -260,3 +286,4 @@ class Review(Base):
     match: Mapped[Match] = relationship()
     reviewer: Mapped[User] = relationship(foreign_keys=[reviewer_id])
     reviewed: Mapped[User] = relationship(foreign_keys=[reviewed_id])
+

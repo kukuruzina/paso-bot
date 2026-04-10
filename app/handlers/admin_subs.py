@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import load_config
 from ..models import User, Subscription
-from ..services.subscriptions import create_invite_link
 
 router = Router()
 
@@ -93,8 +92,9 @@ async def sub_add(message: Message, session: AsyncSession):
     # Отправляем ссылку в группу
     cfg = load_config()
     if cfg.paso_group_id:
-        link = await create_invite_link(message.bot, cfg.paso_group_id)
         await message.bot.send_message(
             user.tg_user_id,
             f"🚪 Ваша ссылка для входа в группу PASO:\n{link}"
         )
+
+
