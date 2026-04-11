@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import User, Subscription
-from ..services.subscriptions import has_active_subscription, create_invite_link
+from ..services.subscriptions import has_active_subscription
 from ..config import load_config
 
 router = Router()
@@ -142,7 +142,8 @@ async def join_group_cb(cq: CallbackQuery, session: AsyncSession):
 
     cfg = load_config()
 
-    link = await create_invite_link(cq.bot, cfg.paso_group_id)
     await cq.message.answer(f"🚪 Вход:\n{link}")
     await cq.answer()
+
+
 

@@ -1,36 +1,47 @@
+import asyncio
 import logging
-import os
-from datetime import datetime
 
-import stripe
-from fastapi import FastAPI
+from aiogram import Bot, Dispatcher
 
-from app.db import get_session
-from app.models import User, Subscription, Payment
-from app.services.subscriptions import activate_subscription
 from app.config import load_config
-
-cfg = load_config()
+from app.handlers import all_routers
+from app.middlewares.subscription_gate import SubscriptionGateMiddleware
+from app.db import init_global_db
 
 # ======================
 # CONFIG
 # ======================
 
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
 
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
-
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
-
-stripe.api_key = STRIPE_SECRET_KEY
-
-app = FastAPI()
-
-logging.basicConfig(level=logging.INFO)
+cfg = load_config()
 
 
-def _now():
-    return datetime.utcnow()
+async def main():
+    print("🚀 Bot starting...")
 
+    # 🔥 ИНИЦИАЛИЗАЦИЯ БД (БЕЗ await !!!)
+    init_global_db(cfg.database_url)
+    print("✅ Database initialized")
+
+    bot = Bot(token=cfg.bot_token)
+    dp = Dispatcher()
+
+    # 🔥 MIDDLEWARE (даёт session в handlers)
+    dp.update.middleware(SubscriptionGateMiddleware())
+
+    # 🔥 ROUTERS
+    for r in all_routers():
+        dp.include_router(r)
+
+    print("✅ Routers loaded")
+    print("🤖 Polling started")
+
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

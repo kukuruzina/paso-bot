@@ -16,8 +16,12 @@ from ..utils import norm
 
 router = Router()
 
-
-# ---------- FSM ----------
+RULES_TEXT = (
+    "📋 Правила:\n\n"
+    "• Перевозка под вашу ответственность\n"
+    "• Запрещённые вещи нельзя\n"
+    "• Всё обсуждается в чате"
+)
 
 class RequestFSM(StatesGroup):
     from_city = State()
@@ -25,15 +29,26 @@ class RequestFSM(StatesGroup):
     category = State()
     weight_band = State()
     carry_type = State()
-    delivery_date_to = State()
+    time_type = State()
 
 
-# ---------- KEYBOARDS ----------
+def request_to_range(time_type: str):
+    today = date.today()
+
+    if time_type == "soon":
+        return today, today + timedelta(days=7)
+    elif time_type == "week_1_2":
+        return today + timedelta(days=7), today + timedelta(days=14)
+    elif time_type == "month":
+        return today, today + timedelta(days=30)
+
+    return today, today + timedelta(days=7)
+
 
 def kb_category():
     b = InlineKeyboardBuilder()
-    b.button(text="👕 Одежда", callback_data="cat:1")
-    b.button(text="💄 Косметика", callback_data="cat:2")
+    b.button(text="👕 Одежда/Обувь", callback_data="cat:1")
+    b.button(text="💄 Косметика/Лекарства", callback_data="cat:2")
     b.button(text="📄 Документы", callback_data="cat:3")
     b.button(text="📱 Техника", callback_data="cat:4")
     b.button(text="📦 Другое", callback_data="cat:5")
@@ -60,12 +75,11 @@ def kb_carry():
     return b.as_markup()
 
 
-def kb_date():
+def kb_time():
     b = InlineKeyboardBuilder()
-    b.button(text="⚡ Ближайшие дни", callback_data="d:1")
-    b.button(text="📅 1–2 недели", callback_data="d:2")
-    b.button(text="🗓 В течение месяца", callback_data="d:3")
-    b.button(text="🐢 Не срочно", callback_data="d:4")
+    b.button(text="⚡ Ближайшие дни", callback_data="t:soon")
+    b.button(text="📅 1–2 недели", callback_data="t:week_1_2")
+    b.button(text="🐢 В течение месяца", callback_data="t:month")
     b.adjust(1)
     return b.as_markup()
 
@@ -76,36 +90,27 @@ def kb_confirm():
     return b.as_markup()
 
 
-# ---------- helpers ----------
-
 async def get_user(session: AsyncSession, tg_user_id: int):
     q = select(User).where(User.tg_user_id == tg_user_id)
     return (await session.execute(q)).scalar_one_or_none()
 
 
-# ---------- START ----------
-
 @router.callback_query(F.data == "go:req")
 async def start_request(cq: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(RequestFSM.from_city)
-
     await cq.message.answer("📦 Отправить товар\n\n1/5 Откуда?")
     await cq.answer()
 
-
-# ---------- TEXT ----------
 
 @router.message(RequestFSM.from_city)
 async def step_from_city(m: Message, state: FSMContext):
     city = norm(m.text)
     if not city:
-        await m.answer("Введите город")
-        return
+        return await m.answer("Введите город")
 
     await state.update_data(from_city=city)
     await state.set_state(RequestFSM.to_city)
-
     await m.answer("2/5 Куда?")
 
 
@@ -113,23 +118,15 @@ async def step_from_city(m: Message, state: FSMContext):
 async def step_to_city(m: Message, state: FSMContext):
     city = norm(m.text)
     if not city:
-        await m.answer("Введите город")
-        return
+        return await m.answer("Введите город")
 
     await state.update_data(to_city=city)
     await state.set_state(RequestFSM.category)
-
     await m.answer("3/5 Категория:", reply_markup=kb_category())
 
 
-# ---------- CATEGORY ----------
-
 @router.callback_query(F.data.startswith("cat:"))
 async def step_category(cq: CallbackQuery, state: FSMContext):
-    print("🔥 CATEGORY CLICK")
-
-    val = cq.data.split(":")[1]
-
     mp = {
         "1": Category.clothes,
         "2": Category.cosmetics,
@@ -138,21 +135,15 @@ async def step_category(cq: CallbackQuery, state: FSMContext):
         "5": Category.other,
     }
 
-    await state.update_data(category=mp[val].value)
+    await state.update_data(category=mp[cq.data.split(":")[1]].value)
     await state.set_state(RequestFSM.weight_band)
 
     await cq.message.answer("4/5 Вес:", reply_markup=kb_weight())
     await cq.answer()
 
 
-# ---------- WEIGHT ----------
-
 @router.callback_query(F.data.startswith("w:"))
 async def step_weight(cq: CallbackQuery, state: FSMContext):
-    print("🔥 WEIGHT CLICK")
-
-    val = cq.data.split(":")[1]
-
     mp = {
         "1": WeightBand.lt1,
         "2": WeightBand.w1_3,
@@ -160,70 +151,45 @@ async def step_weight(cq: CallbackQuery, state: FSMContext):
         "4": WeightBand.gt5,
     }
 
-    await state.update_data(weight_band=mp[val].value)
+    await state.update_data(weight_band=mp[cq.data.split(":")[1]].value)
     await state.set_state(RequestFSM.carry_type)
 
     await cq.message.answer("Тип перевозки:", reply_markup=kb_carry())
     await cq.answer()
 
 
-# ---------- CARRY ----------
-
 @router.callback_query(F.data.startswith("c:"))
 async def step_carry(cq: CallbackQuery, state: FSMContext):
-    print("🔥 CARRY CLICK")
-
-    val = cq.data.split(":")[1]
-
     mp = {
         "1": CarryType.hand_only,
         "2": CarryType.luggage_ok,
         "3": CarryType.any,
     }
 
-    await state.update_data(carry_type=mp[val].value)
-    await state.set_state(RequestFSM.delivery_date_to)
+    await state.update_data(carry_type=mp[cq.data.split(":")[1]].value)
+    await state.set_state(RequestFSM.time_type)
 
-    await cq.message.answer("5/5 Когда?", reply_markup=kb_date())
+    await cq.message.answer("5/5 Когда нужно?", reply_markup=kb_time())
     await cq.answer()
 
 
-# ---------- DATE ----------
+@router.callback_query(F.data.startswith("t:"))
+async def step_time(cq: CallbackQuery, state: FSMContext):
+    await state.update_data(time_type=cq.data.split(":")[1])
 
-@router.callback_query(F.data.startswith("d:"))
-async def step_date(cq: CallbackQuery, state: FSMContext):
-    print("🔥 DATE CLICK")
-
-    today = date.today()
-
-    mp = {
-        "1": today + timedelta(days=3),
-        "2": today + timedelta(days=14),
-        "3": today + timedelta(days=30),
-        "4": today + timedelta(days=90),
-    }
-
-    val = cq.data.split(":")[1]
-
-    await state.update_data(delivery_date_to=mp[val].isoformat())
-
-    await cq.message.answer("📋 Правила", reply_markup=kb_confirm())
+    await cq.message.answer(RULES_TEXT)
+    await cq.message.answer("👇", reply_markup=kb_confirm())
     await cq.answer()
 
-
-# ---------- CONFIRM ----------
 
 @router.callback_query(F.data == "req:confirm")
 async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSession):
-
-    print("🔥 CONFIRM CLICKED")
+    await cq.answer()
 
     user = await get_user(session, cq.from_user.id)
     data = await state.get_data()
 
-    if not data:
-        await cq.message.answer("Ошибка: нет данных")
-        return
+    date_from, date_to = request_to_range(data["time_type"])
 
     req = Request(
         user_id=user.id,
@@ -232,8 +198,9 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
         category=data["category"],
         weight_band=data["weight_band"],
         carry_type=data["carry_type"],
-        delivery_date_to=date.fromisoformat(data["delivery_date_to"]),
-        status="draft",
+        date_from=date_from,
+        date_to=date_to,
+        status="active",
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -242,7 +209,5 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
     await session.commit()
 
     await state.clear()
-
-    await cq.message.answer("✅ Заявка создана")
-    await cq.answer()
+    await cq.message.answer("✅ Заявка создана. Ищем совпадения...")
 

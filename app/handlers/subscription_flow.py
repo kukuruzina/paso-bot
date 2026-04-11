@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 
 import httpx
@@ -9,56 +9,120 @@ from ..config import load_config
 router = Router()
 
 
-def kb_payments(stripe_url: str, yk_url: str):
+# =========================
+# КНОПКИ ТАРИФОВ
+# =========================
+def kb_plans():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇷🇺 Оплатить (карты РФ)", url=yk_url)],
-        [InlineKeyboardButton(text="🌍 Оплатить (международные карты)", url=stripe_url)],
+        [InlineKeyboardButton(text="🥉 Single — €2", callback_data="plan:single")],
+        [InlineKeyboardButton(text="🥈 Standard — €5.55", callback_data="plan:standard")],
+        [InlineKeyboardButton(text="🥇 Pro — €9", callback_data="plan:pro")],
+        [InlineKeyboardButton(text="💎 Premium — €14.5", callback_data="plan:premium")],
     ])
 
 
+# =========================
+# ЭКРАН ПОДПИСКИ
+# =========================
 async def render_subscription(message: Message):
+    await message.answer(
+        "💳 Подписка PASO\n\n"
+        "Выберите тариф:\n\n"
+        "🥉 Single — €2 (1 контакт)\n"
+        "🥈 Standard — €5.55 (14 дней доступа)\n"
+        "🥇 Pro — €9 (30 дней доступа)\n"
+        "💎 Premium — €14.5 (30 дней + приоритет)\n",
+        reply_markup=kb_plans(),
+    )
+
+
+# =========================
+# ВЫБОР ТАРИФА
+# =========================
+@router.callback_query(F.data.startswith("plan:"))
+async def select_plan(callback: CallbackQuery):
+    plan = callback.data.split(":")[1]
+
+    plan_titles = {
+        "single": "🥉 Single — €2 (1 контакт)",
+        "standard": "🥈 Standard — €5.55 (14 дней доступа)",
+        "pro": "🥇 Pro — €9 (30 дней доступа)",
+        "premium": "💎 Premium — €14.5 (30 дней + приоритет)",
+    }
+
+    text = (
+        "💳 Подписка PASO\n\n"
+        f"Вы выбрали:\n{plan_titles.get(plan)}\n\n"
+        "Выберите способ оплаты:"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🌍 Оплатить картой (Stripe)",
+            callback_data=f"pay_stripe:{plan}"
+        )],
+        [InlineKeyboardButton(
+            text="🇷🇺 Оплатить через YooKassa",
+            callback_data=f"pay_yk:{plan}"
+        )],
+    ])
+
+    await callback.message.answer(text, reply_markup=kb)
+
+
+# =========================
+# STRIPE ОПЛАТА
+# =========================
+@router.callback_query(F.data.startswith("pay_stripe:"))
+async def pay_stripe(callback: CallbackQuery):
+    plan = callback.data.split(":")[1]
     cfg = load_config()
 
-    stripe_url = None
-
-    # === Stripe (обязательно должен работать) ===
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{cfg.public_base_url}/stripe/create_checkout",
-                json={"tg_user_id": message.from_user.id},
+                json={
+                    "tg_user_id": callback.from_user.id,
+                    "plan": plan
+                },
                 timeout=10,
             )
-            if r.status_code == 200:
-                stripe_url = r.json().get("url")
-    except Exception:
-        stripe_url = None
 
-    # ❗ если Stripe не работает — показываем ошибку
-    if not stripe_url:
-        await message.answer("Ошибка оплаты. Попробуйте позже.")
+        if r.status_code != 200:
+            raise Exception("Stripe error")
+
+        data = r.json()
+        url = data.get("url")
+
+        if not url:
+            raise Exception("No checkout url")
+
+    except Exception:
+        await callback.message.answer("Ошибка оплаты 😢")
         return
 
-    # === YooKassa (временно заглушка) ===
-    yk_url = "https://yookassa.ru/"  # временно для модерации
-
-    await message.answer(
-        "💳 <b>Подписка PASO</b>\n\n"
-        "Стоимость: <b>555 ₽</b>\n"
-        "Срок: <b>30 дней</b>\n\n"
-        "Подписка даёт доступ к сервису PASO:\n"
-        "— создание заявок на отправку посылок\n"
-        "— поиск перевозчиков\n"
-        "— отклики на заявки\n"
-        "— доступ к контактам пользователей\n\n"
-        "🌍 Способы оплаты:\n"
-        "🇷🇺 Российские карты — YooKassa\n"
-        "🌍 Международные карты — Stripe\n\n"
-        "После оплаты подписка активируется автоматически.",
-        reply_markup=kb_payments(stripe_url, yk_url),
+    await callback.message.answer(
+        "💳 Перейдите к оплате:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Оплатить", url=url)]
+        ])
     )
 
 
+# =========================
+# YOOKASSA (ПОКА ЗАГЛУШКА)
+# =========================
+@router.callback_query(F.data.startswith("pay_yk:"))
+async def pay_yk(callback: CallbackQuery):
+    await callback.message.answer(
+        "🇷🇺 Оплата через YooKassa пока в разработке"
+    )
+
+
+# =========================
+# КОМАНДЫ
+# =========================
 @router.message(Command("subscribe"))
 async def subscribe_cmd(message: Message):
     await render_subscription(message)
@@ -67,5 +131,6 @@ async def subscribe_cmd(message: Message):
 @router.message(F.text.in_(["💳 Подписка", "Подписка"]))
 async def subscribe_menu(message: Message):
     await render_subscription(message)
+
 
 
