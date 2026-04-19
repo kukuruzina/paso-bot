@@ -111,13 +111,44 @@ async def pay_stripe(callback: CallbackQuery):
 
 
 # =========================
-# YOOKASSA (ПОКА ЗАГЛУШКА)
+# YOOKASSA
 # =========================
+from app.yookassa_api import create_yookassa_payment
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
 @router.callback_query(F.data.startswith("pay_yk:"))
 async def pay_yk(callback: CallbackQuery):
-    await callback.message.answer(
-        "🇷🇺 Оплата через YooKassa пока в разработке"
-    )
+    try:
+        # извлекаем тариф
+        plan = callback.data.split(":")[1]
+
+        # создаём оплату
+        url = await create_yookassa_payment(
+            tg_user_id=callback.from_user.id,
+            plan=plan
+        )
+
+        # кнопка оплаты
+        kb = InlineKeyboardBuilder()
+        kb.button(text="💳 Перейти к оплате", url=url)
+        kb.adjust(1)
+
+        await callback.message.answer(
+            f"🇷🇺 YooKassa\n\n"
+            f"Тариф: {plan}\n\n"
+            f"Нажмите кнопку ниже для оплаты 👇",
+            reply_markup=kb.as_markup()
+        )
+
+    except Exception as e:
+        print(f"[YOOKASSA ERROR] {e}")
+
+        await callback.message.answer(
+            "❌ Ошибка при создании платежа. Попробуйте позже."
+        )
+
+    await callback.answer()
 
 
 # =========================

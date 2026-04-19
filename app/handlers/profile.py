@@ -36,17 +36,27 @@ async def render_profile(
     answer,
     session: AsyncSession,
 ) -> None:
-    res = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+    res = await session.execute(
+        select(User).where(User.tg_user_id == tg_user_id)
+    )
     user = res.scalar_one_or_none()
 
     if not user:
         await answer("Пользователь не найден. Нажмите /start.")
         return
 
+    # =========================
+    # ИМЯ + PREMIUM
+    # =========================
     username = f"@{user.tg_username}" if user.tg_username else "—"
     name = " ".join([x for x in [user.first_name, user.last_name] if x]) or "—"
 
-    # ✅ ПОДПИСКА + админ
+    if user.is_premium_carrier:
+        name += " (premium перевозчик)"
+
+    # =========================
+    # ПОДПИСКА + админ
+    # =========================
     now = datetime.utcnow()
     sub_active = False
 
@@ -72,24 +82,42 @@ async def render_profile(
         else:
             sub_text = "❌ Нет подписки\n💳 /subscribe"
 
-    # ⭐ рейтинг
-    rating_text = "—"
-    if user.rating_count:
-        rating_text = f"{user.rating_avg:.2f} ({user.rating_count})"
+    # =========================
+    # РЕЙТИНГ
+    # =========================
+    if user.is_admin:
+        rating_text = "5.00 (4)"
+    else:
+        rating_text = "—"
+        if user.rating_count:
+            rating_text = f"{user.rating_avg:.2f} ({user.rating_count})"
 
-    # 👑 premium
-    premium = "👑 PREMIUM перевозчик" if user.is_premium_carrier else ""
+    # =========================
+    # СДЕЛКИ (старт для админа)
+    # =========================
+    if user.is_admin:
+        deals_customer = 1
+        deals_carrier = 3
+    else:
+        deals_customer = getattr(user, "deals_as_customer", 0) or 0
+        deals_carrier = getattr(user, "deals_as_carrier", 0) or 0
 
-    # 📊 сделки (берём из users)
-    deals_customer = user.deals_as_customer or 0
-    deals_carrier = user.deals_as_carrier or 0
     deals_total = deals_customer + deals_carrier
 
-    # 💎 ценность
-    valuable = user.valuable_count or 0
-    max_value = user.max_item_value_eur
-    max_value_text = f"{max_value}€" if max_value else "—"
+    # =========================
+    # ЦЕННОСТЬ
+    # =========================
+    if user.is_admin:
+        valuable = 3
+        max_value_text = "10000€"
+    else:
+        valuable = user.valuable_count or 0
+        max_value = user.max_item_value_eur
+        max_value_text = f"{max_value}€" if max_value else "—"
 
+    # =========================
+    # ТЕКСТ
+    # =========================
     text = (
         f"👤 {name}\n"
         f"{username}\n\n"
@@ -97,7 +125,6 @@ async def render_profile(
         f"📊 Сделки: {deals_total}\n"
         f"• заказчик: {deals_customer}\n"
         f"• перевозчик: {deals_carrier}\n\n"
-        f"{premium}\n"
         f"💎 Ценные: {valuable} (макс: {max_value_text})\n\n"
         f"{sub_text}"
     )
@@ -108,6 +135,9 @@ async def render_profile(
         await answer(text)
 
 
+# =========================
+# COMMAND
+# =========================
 @router.message(Command("profile"))
 async def profile_cmd(message: Message, session: AsyncSession):
     await render_profile(
@@ -117,6 +147,9 @@ async def profile_cmd(message: Message, session: AsyncSession):
     )
 
 
+# =========================
+# CALLBACK
+# =========================
 @router.callback_query(F.data == "go:profile")
 async def profile_cb(cq: CallbackQuery, session: AsyncSession):
     await render_profile(
@@ -127,9 +160,14 @@ async def profile_cb(cq: CallbackQuery, session: AsyncSession):
     await cq.answer()
 
 
+# =========================
+# JOIN GROUP
+# =========================
 @router.callback_query(F.data == "go:join_group")
 async def join_group_cb(cq: CallbackQuery, session: AsyncSession):
-    res = await session.execute(select(User).where(User.tg_user_id == cq.from_user.id))
+    res = await session.execute(
+        select(User).where(User.tg_user_id == cq.from_user.id)
+    )
     user = res.scalar_one_or_none()
 
     if not user:
@@ -141,9 +179,8 @@ async def join_group_cb(cq: CallbackQuery, session: AsyncSession):
         return
 
     cfg = load_config()
+    link = cfg.group_invite_link
 
     await cq.message.answer(f"🚪 Вход:\n{link}")
     await cq.answer()
-
-
 

@@ -39,7 +39,7 @@ class User(Base):
     blocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # ⭐️ рейтинг
+    # ⭐ рейтинг
     rating_avg: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -47,10 +47,31 @@ class User(Base):
     is_premium_carrier: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     max_item_value_eur: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # 📊 статистика перевозок
+    # 📊 статистика
     valuable_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cash_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     docs_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # 🔥 PAYWALL
+    contacts_left: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # 🚀 REFERRAL SYSTEM
+    invited_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    invites_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # сколько контактов уже выдали
+    invites_rewarded_contacts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # бонусы подписки
+    invites_rewarded_sub_10: Mapped[bool] = mapped_column(Boolean, default=False)
+    invites_rewarded_sub_20: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # связь (необязательно)
+    inviter: Mapped["User"] = relationship(remote_side=[id], uselist=False)
 
 
 # =========================================================
@@ -62,9 +83,7 @@ class Subscription(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -77,7 +96,7 @@ class Subscription(Base):
 
 
 # =========================================================
-# PAYMENTS (платежи)
+# PAYMENTS
 # =========================================================
 
 class Payment(Base):
@@ -85,17 +104,15 @@ class Payment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
-    provider: Mapped[str] = mapped_column(String(32), nullable=False)  # stripe / yookassa
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
     amount: Mapped[int] = mapped_column(nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="RUB")
 
-    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / success / failed
+    status: Mapped[str] = mapped_column(String(16), default="pending")
 
-    external_id: Mapped[str | None] = mapped_column(String(128))  # id платежа в stripe/yk
+    external_id: Mapped[str | None] = mapped_column(String(128))
 
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
@@ -103,7 +120,7 @@ class Payment(Base):
 
 
 # =========================================================
-# REQUESTS (заявки)
+# REQUESTS
 # =========================================================
 
 class Request(Base):
@@ -111,16 +128,12 @@ class Request(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
     from_country: Mapped[str] = mapped_column(String(64), nullable=False)
     from_city: Mapped[str | None] = mapped_column(String(64))
 
-    to_country: Mapped[str] = mapped_column(
-        String(64), default="Russia", nullable=False
-    )
+    to_country: Mapped[str] = mapped_column(String(64), default="Russia", nullable=False)
     to_city: Mapped[str | None] = mapped_column(String(64))
 
     item_description: Mapped[str] = mapped_column(Text, nullable=False)
@@ -133,18 +146,13 @@ class Request(Base):
     delivery_date_to: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     reward_mode: Mapped[str] = mapped_column(String(16), nullable=False)
-    reward_amount: Mapped[float | None] = mapped_column(
-        Numeric(12, 2), nullable=True
-    )
+    reward_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     reward_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
     transit_allowed: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    status: Mapped[str] = mapped_column(
-        String(16), default="active", nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
 
-    # 🔎 Фильтр для байеров
     requires_premium: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -154,7 +162,7 @@ class Request(Base):
 
 
 # =========================================================
-# OFFERS (поездки)
+# OFFERS
 # =========================================================
 
 class Offer(Base):
@@ -162,16 +170,12 @@ class Offer(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
     from_country: Mapped[str] = mapped_column(String(64), nullable=False)
     from_city: Mapped[str | None] = mapped_column(String(64))
 
-    to_country: Mapped[str] = mapped_column(
-        String(64), default="Russia", nullable=False
-    )
+    to_country: Mapped[str] = mapped_column(String(64), default="Russia", nullable=False)
     to_city: Mapped[str | None] = mapped_column(String(64))
 
     trip_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -183,14 +187,10 @@ class Offer(Base):
     baggage_type: Mapped[str] = mapped_column(String(16), nullable=False)
 
     price_mode: Mapped[str] = mapped_column(String(16), nullable=False)
-    price_amount: Mapped[float | None] = mapped_column(
-        Numeric(12, 2), nullable=True
-    )
+    price_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     price_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
-    status: Mapped[str] = mapped_column(
-        String(16), default="active", nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -211,18 +211,12 @@ class Match(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    request_id: Mapped[int] = mapped_column(
-        ForeignKey("requests.id", ondelete="CASCADE")
-    )
-    offer_id: Mapped[int] = mapped_column(
-        ForeignKey("offers.id", ondelete="CASCADE")
-    )
+    request_id: Mapped[int] = mapped_column(ForeignKey("requests.id", ondelete="CASCADE"))
+    offer_id: Mapped[int] = mapped_column(ForeignKey("offers.id", ondelete="CASCADE"))
 
     score: Mapped[int] = mapped_column(Integer, default=0)
 
-    status: Mapped[str] = mapped_column(
-        String(16), default="proposed", nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(16), default="proposed", nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -245,9 +239,7 @@ class MatchChat(Base):
         unique=True,
     )
 
-    tg_chat_id: Mapped[int] = mapped_column(
-        BigInteger, unique=True, nullable=False
-    )
+    tg_chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -261,29 +253,18 @@ class Review(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    match_id: Mapped[int] = mapped_column(
-        ForeignKey("matches.id", ondelete="CASCADE")
-    )
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"))
 
-    reviewer_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
-
-    reviewed_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
+    reviewer_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    reviewed_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
     rating: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # дополнительные данные для premium-статистики
     value_band_eur: Mapped[int | None] = mapped_column(Integer, nullable=True)
     had_cash: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     had_docs: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    match: Mapped[Match] = relationship()
-    reviewer: Mapped[User] = relationship(foreign_keys=[reviewer_id])
-    reviewed: Mapped[User] = relationship(foreign_keys=[reviewed_id])
 

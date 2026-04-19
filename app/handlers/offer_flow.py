@@ -1,3 +1,4 @@
+
 from datetime import date, datetime, timedelta
 
 from aiogram import Router, F
@@ -41,89 +42,93 @@ async def get_user(session, tg_user_id):
     return (await session.execute(q)).scalar_one_or_none()
 
 
-def get_offer_time_type(trip_date: date):
-    delta = (trip_date - date.today()).days
-    if delta <= 7:
-        return "soon"
-    elif delta <= 14:
-        return "week_1_2"
-    return "month"
-
-
-def format_match_text(req: Request, trip_date):
-    username = req.user.username if req.user and req.user.username else "user"
-    hidden = username[:2] + "***"
-
-    t = get_offer_time_type(trip_date)
-
-    if t == "soon":
-        trip_str = trip_date.strftime("%d.%m") + " (скоро)"
-    elif t == "week_1_2":
-        trip_str = trip_date.strftime("%d.%m") + " (1–2 недели)"
+def format_match_text(req: Request, trip_date, user: User | None):
+    # рейтинг
+    if user and user.rating_count:
+        rating = round(user.rating_avg, 1)
+        deals = user.rating_count
+        rating_str = f"{rating} ⭐ ({deals})"
     else:
-        trip_str = "в течение месяца"
+        rating_str = "новый"
+
+    # дата
+    trip_str = trip_date.strftime("%d.%m")
+
+    # вес
+    weight_map = {
+        "lt1": "до 1 кг",
+        "w1_3": "1–3 кг",
+        "w3_5": "3–5 кг",
+        "gt5": "5+ кг",
+    }
+
+    weight_str = weight_map.get(str(req.weight_band), str(req.weight_band))
 
     return (
         f"📦 {req.from_city} → {req.to_city}\n"
-        f"📅 до {req.date_to}\n"
-        f"✈️ Поездка: {trip_str}\n"
-        f"🎒 {req.weight_band}\n\n"
-        f"👤 @{hidden}\n\n"
-        f"🔒 Контакт скрыт"
+        f"📅 Поездка: {trip_str}\n"
+        f"🎒 Место: {weight_str}\n\n"
+        f"👤 Рейтинг: {rating_str}"
     )
 
 
 def match_keyboard(match_id: int):
     b = InlineKeyboardBuilder()
-    b.button(text="🔓 Открыть контакт", callback_data=f"unlock:{match_id}")
+    b.button(
+        text="🔓 Открыть контакт (−1)",
+        callback_data=f"match:contact:{match_id}"
+    )
+    b.adjust(1)
     return b.as_markup()
 
+# ================= OPEN CONTACT =================
 
-# ================= CALENDAR =================
+@router.callback_query(F.data.startswith("match:contact:"))
+async def open_contact(cq: CallbackQuery, session: AsyncSession):
+    await cq.answer()
 
-def kb_calendar_current_week():
-    b = InlineKeyboardBuilder()
-    today = date.today()
+    match_id = int(cq.data.split(":")[2])
 
-    days_until_sunday = 6 - today.weekday()
+    match = await session.get(Match, match_id)
+    if not match:
+        await cq.message.answer("❌ Ошибка")
+        return
 
-    for i in range(days_until_sunday + 1):
-        d = today + timedelta(days=i)
-        b.button(
-            text=d.strftime("%d.%m"),
-            callback_data=f"o_date:{d.isoformat()}"
+    # текущий пользователь
+    user_q = select(User).where(User.tg_user_id == cq.from_user.id)
+    user = (await session.execute(user_q)).scalar_one()
+
+    # проверка доступа
+    if not (user.is_admin or user.contacts_left > 0):
+        await cq.message.answer(
+            "🔒 Недостаточно контактов\n\n"
+            "💳 Купи доступ или пригласи друзей"
         )
+        return
 
-    b.button(text="➡️ Следующая неделя", callback_data="o_cal:next")
-    b.button(text="🐢 В течение месяца", callback_data="o_date:month")
+    # списываем контакт
+    if not user.is_admin:
+        user.contacts_left -= 1
+        await session.commit()
 
-    b.adjust(3)
-    return b.as_markup()
+    # получаем request
+    req = await session.get(Request, match.request_id)
+    if not req:
+        await cq.message.answer("❌ Заявка не найдена")
+        return
 
+    # 🔥 ВАЖНО: грузим user вручную (НЕ req.user!)
+    req_user = await session.get(User, req.user_id)
 
-def kb_calendar_next_week():
-    b = InlineKeyboardBuilder()
-    today = date.today()
+    # формируем контакт
+    username = req_user.tg_username if req_user else None
+    contact = f"@{username}" if username else "не указан"
 
-    days_to_monday = (7 - today.weekday()) % 7
-    if days_to_monday == 0:
-        days_to_monday = 7
+    await cq.message.answer(f"🔓 Контакт:\n{contact}")
 
-    start = today + timedelta(days=days_to_monday)
-
-    for i in range(7):
-        d = start + timedelta(days=i)
-        b.button(
-            text=d.strftime("%d.%m"),
-            callback_data=f"o_date:{d.isoformat()}"
-        )
-
-    b.button(text="⬅️ Назад", callback_data="o_cal:back")
-    b.button(text="🐢 В течение месяца", callback_data="o_date:month")
-
-    b.adjust(3)
-    return b.as_markup()
-
+    # уведомление об остатке
+    if not user.is_admin and user.contacts_left == 1:
+        await cq.message.answer("⚡ Остался 1 контакт")
 
 # ================= FLOW =================
 
@@ -160,41 +165,87 @@ async def step_to_city(m: Message, state: FSMContext):
     await m.answer("3/5 Когда поездка?", reply_markup=kb_calendar_current_week())
 
 
-# ================= NAV =================
+# ================= CALENDAR =================
 
-@router.callback_query(F.data == "o_cal:next", OfferFSM.trip_date)
+def kb_calendar_current_week():
+    b = InlineKeyboardBuilder()
+    today = date.today()
+
+    days_until_sunday = 6 - today.weekday()
+
+    for i in range(days_until_sunday + 1):
+        d = today + timedelta(days=i)
+        b.button(
+            text=d.strftime("%d.%m"),
+            callback_data=f"o_date:{d.isoformat()}"
+        )
+
+    b.button(text="➡️ Следующая неделя", callback_data="o_cal:next")
+    b.button(text="🐢 В течение месяца", callback_data="o_date:month")
+
+    b.adjust(3)
+    return b.as_markup()
+
+
+# ================= CALENDAR NAV =================
+
+def kb_calendar_next_week():
+    b = InlineKeyboardBuilder()
+    today = date.today()
+
+    # найти следующий понедельник
+    days_to_monday = (7 - today.weekday()) % 7
+    if days_to_monday == 0:
+        days_to_monday = 7
+
+    start = today + timedelta(days=days_to_monday)
+
+    for i in range(7):
+        d = start + timedelta(days=i)
+        b.button(
+            text=d.strftime("%d.%m"),
+            callback_data=f"o_date:{d.isoformat()}"
+        )
+
+    b.button(text="⬅️ Назад", callback_data="o_cal:back")
+    b.button(text="🐢 В течение месяца", callback_data="o_date:month")
+
+    b.adjust(3)
+    return b.as_markup()
+
+
+@router.callback_query(F.data == "o_cal:next")
 async def calendar_next(cq: CallbackQuery):
-    await cq.message.edit_reply_markup(reply_markup=kb_calendar_next_week())
-    await cq.answer()
+    await cq.answer()  # 🔥 ОБЯЗАТЕЛЬНО
+
+    await cq.message.edit_reply_markup(
+        reply_markup=kb_calendar_next_week()
+    )
 
 
-@router.callback_query(F.data == "o_cal:back", OfferFSM.trip_date)
+@router.callback_query(F.data == "o_cal:back")
 async def calendar_back(cq: CallbackQuery):
-    await cq.message.edit_reply_markup(reply_markup=kb_calendar_current_week())
-    await cq.answer()
+    await cq.answer()  # 🔥 ОБЯЗАТЕЛЬНО
+
+    await cq.message.edit_reply_markup(
+        reply_markup=kb_calendar_current_week()
+    )
 
 
-# ================= DATE =================
-
-@router.callback_query(F.data.startswith("o_date:"), OfferFSM.trip_date)
+@router.callback_query(F.data.startswith("o_date:"))
 async def step_date(cq: CallbackQuery, state: FSMContext):
     await cq.answer()
 
     val = cq.data.split(":")[1]
     today = date.today()
 
-    if val == "month":
-        d = today + timedelta(days=30)
-    else:
-        d = date.fromisoformat(val)
+    d = today + timedelta(days=30) if val == "month" else date.fromisoformat(val)
 
     await state.update_data(trip_date=d.isoformat())
     await state.set_state(OfferFSM.capacity_band)
 
     await cq.message.answer("4/5 Вес:", reply_markup=kb_weight())
 
-
-# ================= WEIGHT =================
 
 def kb_weight():
     b = InlineKeyboardBuilder()
@@ -222,8 +273,6 @@ async def step_capacity(cq: CallbackQuery, state: FSMContext):
 
     await cq.message.answer("5/5 Тип:", reply_markup=kb_carry())
 
-
-# ================= BAGGAGE =================
 
 def kb_carry():
     b = InlineKeyboardBuilder()
@@ -265,18 +314,18 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
     user = await get_user(session, cq.from_user.id)
     data = await state.get_data()
 
+    raw_date = data.get("trip_date")
+    trip_date = date.fromisoformat(raw_date) if isinstance(raw_date, str) else raw_date
+
     offer = Offer(
         user_id=user.id,
         from_country="any",
         from_city=data.get("from_city"),
         to_country="any",
         to_city=data.get("to_city"),
-
-        trip_date=date.fromisoformat(data.get("trip_date")),
-
+        trip_date=trip_date,
         capacity_band=data.get("capacity_band"),
         baggage_type=data.get("baggage_type"),
-
         price_mode="discuss",
         status=RowStatus.active,
         created_at=datetime.utcnow(),
@@ -289,8 +338,6 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     await state.clear()
 
-    print("🚀 CALL MATCHING FOR OFFER", offer.id)
-
     matches = await find_matches_for_offer(session, offer.id, 5, 0)
 
     if not matches:
@@ -299,14 +346,22 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     await cq.message.answer(f"🔥 Найдено {len(matches)} совпадений:\n")
 
-    for m in matches:
+    # 🔥 ВАЖНО: ВСЁ ВНУТРИ ФУНКЦИИ
+    for i, m in enumerate(matches):
+        if i >= 3:
+            await cq.message.answer("🔒 Есть ещё совпадения — открой доступ")
+            break
+
         req = await session.get(Request, m.request_id)
         if not req:
             continue
 
         await cq.message.answer(
-            format_match_text(req, offer.trip_date),
+            req_user = await session.get (User, req.user_id)
+
+            format_match_text(req, offer.trip_date, req_user),
             reply_markup=match_keyboard(m.id)
         )
+
 
 

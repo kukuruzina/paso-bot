@@ -10,18 +10,23 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from ..enums import Category, WeightBand, CarryType
-from ..models import User, Request
-from ..utils import norm
+from app.enums import Category, WeightBand, CarryType, RowStatus
+from app.models import User, Request, Offer
+from app.matching import find_matches_for_offer
+from app.utils import norm
 
 router = Router()
 
+# ================= RULES =================
+
 RULES_TEXT = (
     "📋 Правила:\n\n"
-    "• Перевозка под вашу ответственность\n"
+    "• Отправка на ваш риск\n"
     "• Запрещённые вещи нельзя\n"
     "• Всё обсуждается в чате"
 )
+
+# ================= FSM =================
 
 class RequestFSM(StatesGroup):
     from_city = State()
@@ -30,6 +35,13 @@ class RequestFSM(StatesGroup):
     weight_band = State()
     carry_type = State()
     time_type = State()
+
+
+# ================= HELPERS =================
+
+async def get_user(session: AsyncSession, tg_user_id: int):
+    q = select(User).where(User.tg_user_id == tg_user_id)
+    return (await session.execute(q)).scalar_one_or_none()
 
 
 def request_to_range(time_type: str):
@@ -44,6 +56,8 @@ def request_to_range(time_type: str):
 
     return today, today + timedelta(days=7)
 
+
+# ================= UI =================
 
 def kb_category():
     b = InlineKeyboardBuilder()
@@ -90,10 +104,57 @@ def kb_confirm():
     return b.as_markup()
 
 
-async def get_user(session: AsyncSession, tg_user_id: int):
-    q = select(User).where(User.tg_user_id == tg_user_id)
-    return (await session.execute(q)).scalar_one_or_none()
+def match_keyboard(match_id: int):
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="🔓 Открыть контакт (−1)",
+        callback_data=f"match:contact:{match_id}"
+    )
+    b.adjust(1)
+    return b.as_markup()
 
+
+# ================= CARD =================
+
+def format_offer_text(off: Offer, user: User | None):
+
+    if user and user.rating_count:
+        rating = round(user.rating_avg, 1)
+        deals = user.rating_count
+        rating_str = f"{rating}⭐({deals})"
+    else:
+        rating_str = "новый"
+
+    trip_str = off.trip_date.strftime("%d.%m")
+
+    weight_map = {
+        "lt1": "до 1 кг",
+        "w1_3": "1–3 кг",
+        "w3_5": "3–5 кг",
+        "gt5": "5+ кг",
+    }
+
+    weight_str = weight_map.get(str(off.capacity_band), off.capacity_band)
+
+    category_map = {
+        "clothes": "Одежда",
+        "cosmetics": "Косметика",
+        "docs": "Документы",
+        "tech": "Техника",
+        "other": "Другое",
+    }
+
+    return (
+        f"📦 {off.from_city} → {off.to_city}\n"
+        f"📅 Поездка: {trip_str}\n"
+        f"👀 Что отправляет: {category_map.get(off.
+capacity_band, 'товар')}\n"
+        f"🎒 Вес: {weight_str}\n\n"
+        f"👤 Рейтинг: {rating_str}"
+    )
+
+
+# ================= FLOW =================
 
 @router.callback_query(F.data == "go:req")
 async def start_request(cq: CallbackQuery, state: FSMContext):
@@ -182,6 +243,8 @@ async def step_time(cq: CallbackQuery, state: FSMContext):
     await cq.answer()
 
 
+# ================= FINISH =================
+
 @router.callback_query(F.data == "req:confirm")
 async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSession):
     await cq.answer()
@@ -193,21 +256,56 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
     req = Request(
         user_id=user.id,
+        from_country="any",
         from_city=data["from_city"],
+        to_country="any",
         to_city=data["to_city"],
+        
+        item_description="товар",
+
         category=data["category"],
         weight_band=data["weight_band"],
         carry_type=data["carry_type"],
-        date_from=date_from,
-        date_to=date_to,
-        status="active",
+
+        reward_mode="none",
+
+        delivery_date_from=date_from,
+        delivery_date_to=date_to,
+        status=RowStatus.active,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
 
     session.add(req)
     await session.commit()
+    await session.refresh(req)
 
     await state.clear()
-    await cq.message.answer("✅ Заявка создана. Ищем совпадения...")
+
+    matches = await find_matches_for_offer(session, req.id, 5, 0)
+
+    if not matches:
+        await cq.message.answer("😔 Пока перевозчиков нет")
+        return
+
+    await cq.message.answer(f"🔥 Найдено {len(matches)} перевозчиков:\n")
+
+    for i, m in enumerate(matches):
+        if i >= 3:
+            await cq.message.answer("🔒 Есть ещё перевозчики — открой доступ")
+            break
+
+        off = await session.get(Offer, m.offer_id)
+        off_user = await session.get(User, off.user_id)
+        if not off:
+            continue
+
+        await cq.message.answer(
+            format_offer_text(off, off_user),
+            reply_markup=match_keyboard(m.id)
+        )
+
+
+
+
 
