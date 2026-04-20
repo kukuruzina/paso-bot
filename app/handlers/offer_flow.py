@@ -1,4 +1,3 @@
-
 from datetime import date, datetime, timedelta
 
 from aiogram import Router, F
@@ -9,7 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models import User, Offer, Match, Request
+from app.models import User, Offer, Request
 from app.enums import WeightBand, CarryType, RowStatus
 from app.matching import find_matches_for_offer
 from app.utils import norm
@@ -33,6 +32,7 @@ class OfferFSM(StatesGroup):
     trip_date = State()
     capacity_band = State()
     baggage_type = State()
+    transport_type = State()  # 🔥 новое
 
 
 # ================= HELPERS =================
@@ -42,19 +42,12 @@ async def get_user(session, tg_user_id):
     return (await session.execute(q)).scalar_one_or_none()
 
 
-def format_match_text(req: Request, trip_date, user: User | None):
-    # рейтинг
+def format_request_text(req: Request, user: User | None, transport_type: str):
     if user and user.rating_count:
-        rating = round(user.rating_avg, 1)
-        deals = user.rating_count
-        rating_str = f"{rating} ⭐ ({deals})"
+        rating_str = f"{round(user.rating_avg,1)}⭐({user.rating_count})"
     else:
         rating_str = "новый"
 
-    # дата
-    trip_str = trip_date.strftime("%d.%m")
-
-    # вес
     weight_map = {
         "lt1": "до 1 кг",
         "w1_3": "1–3 кг",
@@ -62,107 +55,25 @@ def format_match_text(req: Request, trip_date, user: User | None):
         "gt5": "5+ кг",
     }
 
-    weight_str = weight_map.get(str(req.weight_band), str(req.weight_band))
+    transport_map = {
+        "plane": "✈️ Самолет",
+        "car": "🚗 Машина",
+        "any": "любой",
+    }
 
     return (
         f"📦 {req.from_city} → {req.to_city}\n"
-        f"📅 Поездка: {trip_str}\n"
-        f"🎒 Место: {weight_str}\n\n"
+        f"📅 Нужно до: {req.delivery_date_to.strftime('%d.%m')}\n"
+        f"🎒 Вес: {weight_map.get(str(req.weight_band), req.weight_band)}\n"
+        f"🚘 Тип: {transport_map.get(transport_type, 'любой')}\n\n"
         f"👤 Рейтинг: {rating_str}"
     )
 
 
 def match_keyboard(match_id: int):
     b = InlineKeyboardBuilder()
-    b.button(
-        text="🔓 Открыть контакт (−1)",
-        callback_data=f"match:contact:{match_id}"
-    )
-    b.adjust(1)
+    b.button(text="🔓 Открыть контакт (−1)", callback_data=f"match:contact:{match_id}")
     return b.as_markup()
-
-# ================= OPEN CONTACT =================
-
-@router.callback_query(F.data.startswith("match:contact:"))
-async def open_contact(cq: CallbackQuery, session: AsyncSession):
-    await cq.answer()
-
-    match_id = int(cq.data.split(":")[2])
-
-    match = await session.get(Match, match_id)
-    if not match:
-        await cq.message.answer("❌ Ошибка")
-        return
-
-    # текущий пользователь
-    user_q = select(User).where(User.tg_user_id == cq.from_user.id)
-    user = (await session.execute(user_q)).scalar_one()
-
-    # проверка доступа
-    if not (user.is_admin or user.contacts_left > 0):
-        await cq.message.answer(
-            "🔒 Недостаточно контактов\n\n"
-            "💳 Купи доступ или пригласи друзей"
-        )
-        return
-
-    # списываем контакт
-    if not user.is_admin:
-        user.contacts_left -= 1
-        await session.commit()
-
-    # получаем request
-    req = await session.get(Request, match.request_id)
-    if not req:
-        await cq.message.answer("❌ Заявка не найдена")
-        return
-
-    # 🔥 ВАЖНО: грузим user вручную (НЕ req.user!)
-    req_user = await session.get(User, req.user_id)
-
-    # формируем контакт
-    username = req_user.tg_username if req_user else None
-    contact = f"@{username}" if username else "не указан"
-
-    await cq.message.answer(f"🔓 Контакт:\n{contact}")
-
-    # уведомление об остатке
-    if not user.is_admin and user.contacts_left == 1:
-        await cq.message.answer("⚡ Остался 1 контакт")
-
-# ================= FLOW =================
-
-@router.callback_query(F.data == "go:off")
-async def start_offer(cq: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await state.set_state(OfferFSM.from_city)
-
-    await cq.message.answer("✈️ 1/5 Откуда выезжаете?")
-    await cq.answer()
-
-
-@router.message(OfferFSM.from_city)
-async def step_from_city(m: Message, state: FSMContext):
-    city = norm(m.text)
-    if not city:
-        return await m.answer("Введите город")
-
-    await state.update_data(from_city=city)
-    await state.set_state(OfferFSM.to_city)
-
-    await m.answer("2/5 Куда едете?")
-
-
-@router.message(OfferFSM.to_city)
-async def step_to_city(m: Message, state: FSMContext):
-    city = norm(m.text)
-    if not city:
-        return await m.answer("Введите город")
-
-    await state.update_data(to_city=city)
-    await state.set_state(OfferFSM.trip_date)
-
-    await m.answer("3/5 Когда поездка?", reply_markup=kb_calendar_current_week())
 
 
 # ================= CALENDAR =================
@@ -187,17 +98,11 @@ def kb_calendar_current_week():
     return b.as_markup()
 
 
-# ================= CALENDAR NAV =================
-
 def kb_calendar_next_week():
     b = InlineKeyboardBuilder()
     today = date.today()
 
-    # найти следующий понедельник
-    days_to_monday = (7 - today.weekday()) % 7
-    if days_to_monday == 0:
-        days_to_monday = 7
-
+    days_to_monday = (7 - today.weekday()) % 7 or 7
     start = today + timedelta(days=days_to_monday)
 
     for i in range(7):
@@ -216,20 +121,51 @@ def kb_calendar_next_week():
 
 @router.callback_query(F.data == "o_cal:next")
 async def calendar_next(cq: CallbackQuery):
-    await cq.answer()  # 🔥 ОБЯЗАТЕЛЬНО
-
-    await cq.message.edit_reply_markup(
-        reply_markup=kb_calendar_next_week()
-    )
+    await cq.answer()
+    await cq.message.edit_reply_markup(reply_markup=kb_calendar_next_week())
 
 
 @router.callback_query(F.data == "o_cal:back")
 async def calendar_back(cq: CallbackQuery):
-    await cq.answer()  # 🔥 ОБЯЗАТЕЛЬНО
+    await cq.answer()
+    await cq.message.edit_reply_markup(reply_markup=kb_calendar_current_week())
 
-    await cq.message.edit_reply_markup(
-        reply_markup=kb_calendar_current_week()
-    )
+
+# ================= FLOW =================
+
+@router.callback_query(F.data == "go:off")
+async def start_offer(cq: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.set_state(OfferFSM.from_city)
+
+    await cq.message.answer("✈️ 1/6 Откуда выезжаете?")
+    await cq.answer()
+
+
+@router.message(OfferFSM.from_city)
+async def step_from_city(m: Message, state: FSMContext):
+    city = norm(m.text)
+
+    if not city or len(city) < 3:
+        return await m.answer("Введите корректный город")
+
+    await state.update_data(from_city=city)
+    await state.set_state(OfferFSM.to_city)
+
+    await m.answer("2/6 Куда едете?")
+
+
+@router.message(OfferFSM.to_city)
+async def step_to_city(m: Message, state: FSMContext):
+    city = norm(m.text)
+
+    if not city or len(city) < 3:
+        return await m.answer("Введите корректный город")
+
+    await state.update_data(to_city=city)
+    await state.set_state(OfferFSM.trip_date)
+
+    await m.answer("3/6 Когда поездка?", reply_markup=kb_calendar_current_week())
 
 
 @router.callback_query(F.data.startswith("o_date:"))
@@ -244,7 +180,7 @@ async def step_date(cq: CallbackQuery, state: FSMContext):
     await state.update_data(trip_date=d.isoformat())
     await state.set_state(OfferFSM.capacity_band)
 
-    await cq.message.answer("4/5 Вес:", reply_markup=kb_weight())
+    await cq.message.answer("4/6 Вес:", reply_markup=kb_weight())
 
 
 def kb_weight():
@@ -258,7 +194,7 @@ def kb_weight():
 
 
 @router.callback_query(F.data.startswith("o_w:"))
-async def step_capacity(cq: CallbackQuery, state: FSMContext):
+async def step_weight(cq: CallbackQuery, state: FSMContext):
     await cq.answer()
 
     mp = {
@@ -271,7 +207,7 @@ async def step_capacity(cq: CallbackQuery, state: FSMContext):
     await state.update_data(capacity_band=mp[cq.data.split(":")[1]])
     await state.set_state(OfferFSM.baggage_type)
 
-    await cq.message.answer("5/5 Тип:", reply_markup=kb_carry())
+    await cq.message.answer("5/6 Тип багажа:", reply_markup=kb_carry())
 
 
 def kb_carry():
@@ -284,7 +220,7 @@ def kb_carry():
 
 
 @router.callback_query(F.data.startswith("o_c:"))
-async def step_baggage(cq: CallbackQuery, state: FSMContext):
+async def step_carry(cq: CallbackQuery, state: FSMContext):
     await cq.answer()
 
     mp = {
@@ -294,6 +230,26 @@ async def step_baggage(cq: CallbackQuery, state: FSMContext):
     }
 
     await state.update_data(baggage_type=mp[cq.data.split(":")[1]])
+    await state.set_state(OfferFSM.transport_type)
+
+    await cq.message.answer("6/6 Как передвигаетесь?", reply_markup=kb_transport())
+
+
+def kb_transport():
+    b = InlineKeyboardBuilder()
+    b.button(text="✈️ Самолет", callback_data="o_t:plane")
+    b.button(text="🚗 Машина", callback_data="o_t:car")
+    b.button(text="👌 Не важно", callback_data="o_t:any")
+    b.adjust(1)
+    return b.as_markup()
+
+
+@router.callback_query(F.data.startswith("o_t:"))
+async def step_transport(cq: CallbackQuery, state: FSMContext):
+    await cq.answer()
+
+    val = cq.data.split(":")[1]
+    await state.update_data(transport_type=val)
 
     await cq.message.answer(RULES_TEXT)
     await cq.message.answer("👇", reply_markup=kb_confirm())
@@ -305,7 +261,7 @@ def kb_confirm():
     return b.as_markup()
 
 
-# ================= CONFIRM =================
+# ================= FINISH =================
 
 @router.callback_query(F.data == "off:confirm")
 async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSession):
@@ -314,18 +270,16 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
     user = await get_user(session, cq.from_user.id)
     data = await state.get_data()
 
-    raw_date = data.get("trip_date")
-    trip_date = date.fromisoformat(raw_date) if isinstance(raw_date, str) else raw_date
-
     offer = Offer(
         user_id=user.id,
         from_country="any",
-        from_city=data.get("from_city"),
+        from_city=data["from_city"],
         to_country="any",
-        to_city=data.get("to_city"),
-        trip_date=trip_date,
-        capacity_band=data.get("capacity_band"),
-        baggage_type=data.get("baggage_type"),
+        to_city=data["to_city"],
+        trip_date=date.fromisoformat(data["trip_date"]),
+        capacity_band=data["capacity_band"],
+        baggage_type=data["baggage_type"],
+        transport_type=data.get("transport_type", "any"),  # 🔥
         price_mode="discuss",
         status=RowStatus.active,
         created_at=datetime.utcnow(),
@@ -341,27 +295,20 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
     matches = await find_matches_for_offer(session, offer.id, 5, 0)
 
     if not matches:
-        await cq.message.answer("😔 Пока совпадений нет")
-        return
+        return await cq.message.answer("😔 Пока заявок нет")
 
-    await cq.message.answer(f"🔥 Найдено {len(matches)} совпадений:\n")
+    await cq.message.answer(f"🔥 Найдено {len(matches)} заявок:\n")
 
-    # 🔥 ВАЖНО: ВСЁ ВНУТРИ ФУНКЦИИ
     for i, m in enumerate(matches):
         if i >= 3:
-            await cq.message.answer("🔒 Есть ещё совпадения — открой доступ")
+            await cq.message.answer("🔒 Есть ещё заявки — открой доступ")
             break
 
         req = await session.get(Request, m.request_id)
-        if not req:
-            continue
+        req_user = await session.get(User, req.user_id)
 
         await cq.message.answer(
-            req_user = await session.get (User, req.user_id)
-
-            format_match_text(req, offer.trip_date, req_user),
+            format_request_text(req, req_user, offer.transport_type),
             reply_markup=match_keyboard(m.id)
         )
-
-
 

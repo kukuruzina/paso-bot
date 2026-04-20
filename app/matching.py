@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,27 +9,66 @@ from app.enums import CarryType, RowStatus
 from app.utils import norm
 
 
+# ================= WEIGHT =================
+
 WEIGHT_RANK = {
     "lt1": 1,
-    "1_3": 2,
-    "3_5": 3,
+    "w1_3": 2,
+    "w3_5": 3,
     "gt5": 4,
 }
 
 
-def weight_covers(offer_band: str, req_band: str) -> bool:
+def normalize_enum(val):
+    if hasattr(val, "value"):
+        return val.value
+    return val
+
+
+def weight_covers(offer_band, req_band) -> bool:
+    offer_band = normalize_enum(offer_band)
+    req_band = normalize_enum(req_band)
+
     return WEIGHT_RANK.get(offer_band, 0) >= WEIGHT_RANK.get(req_band, 0)
 
 
-def baggage_compatible(req_carry: str, off_baggage: str) -> bool:
-    if req_carry == CarryType.any:
+# ================= CARRY =================
+
+def baggage_compatible(req_carry, off_baggage) -> bool:
+    req_carry = normalize_enum(req_carry)
+    off_baggage = normalize_enum(off_baggage)
+
+    # 🔥 ANY = всё
+    if req_carry == "any" or off_baggage == "any":
         return True
-    if req_carry == CarryType.hand_only:
-        return off_baggage in (CarryType.hand_only, CarryType.any)
-    if req_carry == CarryType.luggage_ok:
-        return off_baggage in (CarryType.luggage_ok, CarryType.any)
+
+    return req_carry == off_baggage
+
+
+# ================= TRANSPORT =================
+
+def transport_compatible(off_transport):
+    """
+    🔥 ТЕКУЩАЯ ЛОГИКА:
+    request пока не фильтрует → показываем всё
+    """
     return True
 
+
+def transport_match(req_transport, off_transport):
+    """
+    🔥 ГОТОВО НА БУДУЩЕЕ (как carry)
+    """
+    req_transport = normalize_enum(req_transport)
+    off_transport = normalize_enum(off_transport)
+
+    if req_transport == "any" or off_transport == "any":
+        return True
+
+    return req_transport == off_transport
+
+
+# ================= CITY =================
 
 def city_match(a: str | None, b: str | None) -> bool:
     if not a or not b:
@@ -37,9 +76,12 @@ def city_match(a: str | None, b: str | None) -> bool:
     return norm(a) == norm(b)
 
 
-def calc_score(req: Request, off: Offer, offer_user: User | None) -> int:
-    score = 50  # базовый за совпадение маршрута
+# ================= SCORE =================
 
+def calc_score(req: Request, off: Offer, offer_user: User | None) -> int:
+    score = 50
+
+    # даты
     if req.delivery_date_to:
         delta = (req.delivery_date_to - off.trip_date).days
         if delta >= 0:
@@ -50,12 +92,32 @@ def calc_score(req: Request, off: Offer, offer_user: User | None) -> int:
             elif delta <= 7:
                 score += 10
 
+    # вес
     if weight_covers(off.capacity_band, req.weight_band):
         score += 10
 
+    # carry бонус
+    req_carry = normalize_enum(req.carry_type)
+    off_carry = normalize_enum(off.baggage_type)
+
+    if req_carry == off_carry:
+        score += 5
+    elif req_carry == "any" or off_carry == "any":
+        score += 2
+
+    # 🔥 transport бонус (без фильтра)
+    off_transport = normalize_enum(getattr(off, "transport_type", "any"))
+
+    if off_transport == "any":
+        score += 1
+    else:
+        score += 3  # конкретный транспорт = лучше
+
+    # рейтинг
     if offer_user and offer_user.rating_count:
         score += int(offer_user.rating_avg * 2)
 
+    # премиум
     if offer_user and offer_user.is_premium_carrier:
         score += 15
 
@@ -117,6 +179,16 @@ async def find_matches_for_offer(
             print("❌ skip: too late")
             continue
 
+        # carry
+        if not baggage_compatible(req.carry_type, off.baggage_type):
+            print("❌ skip: carry mismatch")
+            continue
+
+        # 🔥 transport (ПОКА НЕ ФИЛЬТРУЕМ)
+        if not transport_compatible(off.transport_type):
+            print("❌ skip: transport mismatch")
+            continue
+
         score = calc_score(req, off, offer_user)
         candidates.append((req, score))
 
@@ -148,7 +220,7 @@ async def find_matches_for_offer(
             request_id=req.id,
             offer_id=off.id,
             score=score,
-            status="proposed",  # 🔥 ФИКС
+            status="proposed",
         )
 
         session.add(m)

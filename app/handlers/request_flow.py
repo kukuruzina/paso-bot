@@ -34,6 +34,7 @@ class RequestFSM(StatesGroup):
     category = State()
     weight_band = State()
     carry_type = State()
+    transport_type = State()  # 🔥 новое
     time_type = State()
 
 
@@ -89,6 +90,15 @@ def kb_carry():
     return b.as_markup()
 
 
+def kb_transport():
+    b = InlineKeyboardBuilder()
+    b.button(text="✈️ Самолет", callback_data="t2:plane")
+    b.button(text="🚗 Машина", callback_data="t2:car")
+    b.button(text="👌 Не важно", callback_data="t2:any")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def kb_time():
     b = InlineKeyboardBuilder()
     b.button(text="⚡ Ближайшие дни", callback_data="t:soon")
@@ -110,22 +120,16 @@ def match_keyboard(match_id: int):
         text="🔓 Открыть контакт (−1)",
         callback_data=f"match:contact:{match_id}"
     )
-    b.adjust(1)
     return b.as_markup()
 
 
 # ================= CARD =================
 
 def format_offer_text(off: Offer, user: User | None):
-
     if user and user.rating_count:
-        rating = round(user.rating_avg, 1)
-        deals = user.rating_count
-        rating_str = f"{rating}⭐({deals})"
+        rating_str = f"{round(user.rating_avg, 1)}⭐({user.rating_count})"
     else:
         rating_str = "новый"
-
-    trip_str = off.trip_date.strftime("%d.%m")
 
     weight_map = {
         "lt1": "до 1 кг",
@@ -134,22 +138,17 @@ def format_offer_text(off: Offer, user: User | None):
         "gt5": "5+ кг",
     }
 
-    weight_str = weight_map.get(str(off.capacity_band), off.capacity_band)
-
-    category_map = {
-        "clothes": "Одежда",
-        "cosmetics": "Косметика",
-        "docs": "Документы",
-        "tech": "Техника",
-        "other": "Другое",
+    transport_map = {
+        "plane": "✈️ Самолет",
+        "car": "🚗 Машина",
+        "any": "любой",
     }
 
     return (
-        f"📦 {off.from_city} → {off.to_city}\n"
-        f"📅 Поездка: {trip_str}\n"
-        f"👀 Что отправляет: {category_map.get(off.
-capacity_band, 'товар')}\n"
-        f"🎒 Вес: {weight_str}\n\n"
+        f"✈️ {off.from_city} → {off.to_city}\n"
+        f"📅 Дата: {off.trip_date.strftime('%d.%m')}\n"
+        f"🎒 Место: {weight_map.get(str(off.capacity_band), off.capacity_band)}\n"
+        f"🚘 Тип: {transport_map.get(str(off.transport_type), 'любой')}\n\n"
         f"👤 Рейтинг: {rating_str}"
     )
 
@@ -160,30 +159,35 @@ capacity_band, 'товар')}\n"
 async def start_request(cq: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(RequestFSM.from_city)
-    await cq.message.answer("📦 Отправить товар\n\n1/5 Откуда?")
+
+    await cq.message.answer("📦 Отправить товар\n\n1/6 Откуда?")
     await cq.answer()
 
 
 @router.message(RequestFSM.from_city)
 async def step_from_city(m: Message, state: FSMContext):
     city = norm(m.text)
-    if not city:
-        return await m.answer("Введите город")
+
+    if not city or len(city) < 3:
+        return await m.answer("Введите корректный город")
 
     await state.update_data(from_city=city)
     await state.set_state(RequestFSM.to_city)
-    await m.answer("2/5 Куда?")
+
+    await m.answer("2/6 Куда?")
 
 
 @router.message(RequestFSM.to_city)
 async def step_to_city(m: Message, state: FSMContext):
     city = norm(m.text)
-    if not city:
-        return await m.answer("Введите город")
+
+    if not city or len(city) < 3:
+        return await m.answer("Введите корректный город")
 
     await state.update_data(to_city=city)
     await state.set_state(RequestFSM.category)
-    await m.answer("3/5 Категория:", reply_markup=kb_category())
+
+    await m.answer("3/6 Категория:", reply_markup=kb_category())
 
 
 @router.callback_query(F.data.startswith("cat:"))
@@ -199,7 +203,7 @@ async def step_category(cq: CallbackQuery, state: FSMContext):
     await state.update_data(category=mp[cq.data.split(":")[1]].value)
     await state.set_state(RequestFSM.weight_band)
 
-    await cq.message.answer("4/5 Вес:", reply_markup=kb_weight())
+    await cq.message.answer("4/6 Вес:", reply_markup=kb_weight())
     await cq.answer()
 
 
@@ -215,7 +219,7 @@ async def step_weight(cq: CallbackQuery, state: FSMContext):
     await state.update_data(weight_band=mp[cq.data.split(":")[1]].value)
     await state.set_state(RequestFSM.carry_type)
 
-    await cq.message.answer("Тип перевозки:", reply_markup=kb_carry())
+    await cq.message.answer("5/6 Тип перевозки:", reply_markup=kb_carry())
     await cq.answer()
 
 
@@ -228,9 +232,18 @@ async def step_carry(cq: CallbackQuery, state: FSMContext):
     }
 
     await state.update_data(carry_type=mp[cq.data.split(":")[1]].value)
+    await state.set_state(RequestFSM.transport_type)
+
+    await cq.message.answer("6/6 Предпочтительный транспорт:", reply_markup=kb_transport())
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("t2:"))
+async def step_transport(cq: CallbackQuery, state: FSMContext):
+    await state.update_data(transport_type=cq.data.split(":")[1])
     await state.set_state(RequestFSM.time_type)
 
-    await cq.message.answer("5/5 Когда нужно?", reply_markup=kb_time())
+    await cq.message.answer("Когда нужно?", reply_markup=kb_time())
     await cq.answer()
 
 
@@ -260,17 +273,19 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
         from_city=data["from_city"],
         to_country="any",
         to_city=data["to_city"],
-        
+
         item_description="товар",
 
         category=data["category"],
         weight_band=data["weight_band"],
         carry_type=data["carry_type"],
+        transport_type=data.get("transport_type", "any"),  # 🔥
 
         reward_mode="none",
 
         delivery_date_from=date_from,
         delivery_date_to=date_to,
+
         status=RowStatus.active,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
@@ -285,8 +300,7 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
     matches = await find_matches_for_offer(session, req.id, 5, 0)
 
     if not matches:
-        await cq.message.answer("😔 Пока перевозчиков нет")
-        return
+        return await cq.message.answer("😔 Пока перевозчиков нет")
 
     await cq.message.answer(f"🔥 Найдено {len(matches)} перевозчиков:\n")
 
@@ -297,15 +311,9 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
         off = await session.get(Offer, m.offer_id)
         off_user = await session.get(User, off.user_id)
-        if not off:
-            continue
 
         await cq.message.answer(
             format_offer_text(off, off_user),
             reply_markup=match_keyboard(m.id)
         )
-
-
-
-
 

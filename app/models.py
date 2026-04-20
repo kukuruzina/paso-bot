@@ -141,6 +141,7 @@ class Request(Base):
 
     weight_band: Mapped[str] = mapped_column(String(12), nullable=False)
     carry_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    transport_type: Mapped[str] = mapped_column(String(16), default="any")
 
     delivery_date_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     delivery_date_to: Mapped[date | None] = mapped_column(Date, nullable=True)
