@@ -186,6 +186,7 @@ class Offer(Base):
 
     capacity_band: Mapped[str] = mapped_column(String(12), nullable=False)
     baggage_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    transport_type: Mapped[str] = mapped_column(String(16), default="any")
 
     price_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     price_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
@@ -267,5 +268,6 @@ class Review(Base):
     had_docs: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
 
 

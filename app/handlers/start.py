@@ -71,8 +71,8 @@ async def start(m: Message, session: AsyncSession, command: CommandObject):
 
     await m.answer(
         "🚀 Добро пожаловать в PASO\n\n"
-        "📦 Отправляй товары через путешественников\n"
-        "✈️ Или зарабатывай на доставке\n\n"
+        "📦 Отправляйте товары через путешественников\n"
+        "💸 Или подрабатывайте на доставке\n\n"
         "👇 Выбери действие:",
         reply_markup=kb_main(is_admin=user.is_admin),
     )
@@ -127,5 +127,6 @@ async def referral_menu(cq: CallbackQuery, session: AsyncSession):
     )
 
     await cq.message.answer(text)
+
 
 

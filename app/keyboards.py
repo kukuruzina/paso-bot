@@ -1,4 +1,5 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 # =========================================================
@@ -7,16 +8,19 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def kb_main(is_admin: bool = False):
     b = InlineKeyboardBuilder()
-    b.button(text="📦 Отправить товар", callback_data="go:req")
-    b.button(text="✈️ Планирую поездку и могу взять", callback_data="go:off")
+    b.button(text="📦 Отправить посылку", callback_data="go:req")
+    b.button(text="🧳 Взять заказ в поездку", callback_data="go:off")
     b.button(text="👤 Профиль", callback_data="go:profile")
     b.button(text="💳 Подписка", callback_data="go:subscribe")
 
     if is_admin:
-       b.button(text="📊 Admin stats", callback_data="go:stats")
+        b.button(text="📊 Admin stats", callback_data="go:stats")
 
-    # 🔥 новая кнопка (рефералка)
+    # 🎁 рефералка
     b.button(text="🎁 Пригласить", callback_data="ref:menu")
+
+    # 💬 feedback
+    b.button(text="💬 Обратная связь", callback_data="feedback:start")
 
     b.adjust(1)
     return b.as_markup()
@@ -55,21 +59,88 @@ def kb_offer_match_actions(match_id: int):
 def match_keyboard(match_id: int):
     b = InlineKeyboardBuilder()
 
-    # 💸 основная кнопка (монетизация)
+    # 💸 монетизация
     b.button(
         text="🔓 Открыть контакт",
         callback_data=f"match:contact:{match_id}"
     )
 
-    # 👤 доверие → повышает оплату
+    # 👤 профиль
     b.button(
         text="👤 Профиль",
         callback_data=f"match:profile:{match_id}"
     )
 
     b.adjust(1)
-
     return b.as_markup()
 
 
+# =========================================================
+# 🔥 ПОСЛЕ ОТКРЫТИЯ КОНТАКТА (НОВОЕ)
+# =========================================================
+
+def kb_deal_result(match_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Договорились",
+                callback_data=f"deal:ok:{match_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="❌ Не договорились",
+                callback_data=f"deal:fail:{match_id}"
+            )
+        ]
+    ])
+
+
+# =========================================================
+# ⭐ РЕЙТИНГ (НОВОЕ)
+# =========================================================
+
+def kb_rating(match_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⭐1", callback_data=f"rate:1:{match_id}"),
+            InlineKeyboardButton(text="⭐2", callback_data=f"rate:2:{match_id}"),
+            InlineKeyboardButton(text="⭐3", callback_data=f"rate:3:{match_id}"),
+            InlineKeyboardButton(text="⭐4", callback_data=f"rate:4:{match_id}"),
+            InlineKeyboardButton(text="⭐5", callback_data=f"rate:5:{match_id}"),
+        ]
+    ])
+
+
+# =========================================================
+# ❌ ПРИЧИНЫ ОТКАЗА (НОВОЕ)
+# =========================================================
+
+def kb_fail_reasons(match_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="💰 Дорого",
+                callback_data=f"fail:price:{match_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📅 Не совпали даты",
+                callback_data=f"fail:date:{match_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🤷 Передумал(а)",
+                callback_data=f"fail:change:{match_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="✍️ Другое",
+                callback_data=f"fail:other:{match_id}"
+            )
+        ],
+    ])
 

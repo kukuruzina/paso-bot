@@ -35,30 +35,26 @@ def weight_covers(offer_band, req_band) -> bool:
 # ================= CARRY =================
 
 def baggage_compatible(req_carry, off_baggage) -> bool:
-    req_carry = normalize_enum(req_carry)
-    off_baggage = normalize_enum(off_baggage)
+    req = normalize_enum(req_carry)
+    off = normalize_enum(off_baggage)
 
-    # 🔥 ANY = всё
-    if req_carry == "any" or off_baggage == "any":
-        return True
+    # если нужен багаж — только если он есть
+    if req == "luggage":
+        return off == "luggage"
 
-    return req_carry == off_baggage
+    # если можно ручную — подходят оба
+    if req == "hand":
+        return off in ("hand", "luggage")
 
+    return False
 
 # ================= TRANSPORT =================
 
 def transport_compatible(off_transport):
-    """
-    🔥 ТЕКУЩАЯ ЛОГИКА:
-    request пока не фильтрует → показываем всё
-    """
-    return True
+    return True  # пока не фильтруем
 
 
 def transport_match(req_transport, off_transport):
-    """
-    🔥 ГОТОВО НА БУДУЩЕЕ (как carry)
-    """
     req_transport = normalize_enum(req_transport)
     off_transport = normalize_enum(off_transport)
 
@@ -96,36 +92,53 @@ def calc_score(req: Request, off: Offer, offer_user: User | None) -> int:
     if weight_covers(off.capacity_band, req.weight_band):
         score += 10
 
-    # carry бонус
-    req_carry = normalize_enum(req.carry_type)
-    off_carry = normalize_enum(off.baggage_type)
-
-    if req_carry == off_carry:
-        score += 5
-    elif req_carry == "any" or off_carry == "any":
-        score += 2
-
-    # 🔥 transport бонус (без фильтра)
+    # transport бонус
     off_transport = normalize_enum(getattr(off, "transport_type", "any"))
 
     if off_transport == "any":
         score += 1
     else:
-        score += 3  # конкретный транспорт = лучше
+        score += 3
 
     # рейтинг
     if offer_user and offer_user.rating_count:
         score += int(offer_user.rating_avg * 2)
 
     # премиум
-    if offer_user and offer_user.is_premium_carrier:
+    if offer_user and getattr(offer_user, "is_premium_carrier", False):
         score += 15
 
     return score
 
 
 # =========================================================
-# ✈️ OFFER → REQUESTS
+# 🔧 ОБЩИЙ МЕТОД СОЗДАНИЯ MATCH
+# =========================================================
+
+async def create_match_if_not_exists(session, req: Request, off: Offer, score: int):
+    existing = await session.execute(
+        select(Match).where(
+            Match.request_id == req.id,
+            Match.offer_id == off.id,
+        )
+    )
+
+    if existing.scalar_one_or_none():
+        return None
+
+    m = Match(
+        request_id=req.id,
+        offer_id=off.id,
+        score=score,
+        status="proposed",
+    )
+
+    session.add(m)
+    return m
+
+
+# =========================================================
+# ✈️ OFFER → REQUESTS (ОСТАВИЛ КАК ЕСТЬ)
 # =========================================================
 
 async def find_matches_for_offer(
@@ -134,7 +147,6 @@ async def find_matches_for_offer(
     window_days: int,
     top_n: int,
 ):
-
     print("🔥 MATCHING OFFER STARTED", offer_id)
 
     off = await session.get(Offer, offer_id)
@@ -153,90 +165,98 @@ async def find_matches_for_offer(
 
     for req in requests:
 
-        print(
-            "🔍 CHECK:",
-            req.id,
-            req.from_city,
-            "→",
-            req.to_city,
-            "|",
-            off.from_city,
-            "→",
-            off.to_city,
-        )
-
         # маршрут
         if not (city_match(req.from_city, off.from_city) and city_match(req.to_city, off.to_city)):
-            print("❌ skip: city mismatch")
             continue
 
         # даты
         if req.delivery_date_from and off.trip_date < req.delivery_date_from:
-            print("❌ skip: too early")
             continue
 
         if req.delivery_date_to and off.trip_date > req.delivery_date_to:
-            print("❌ skip: too late")
             continue
 
         # carry
         if not baggage_compatible(req.carry_type, off.baggage_type):
-            print("❌ skip: carry mismatch")
             continue
 
-        # 🔥 transport (ПОКА НЕ ФИЛЬТРУЕМ)
+        # transport
         if not transport_compatible(off.transport_type):
-            print("❌ skip: transport mismatch")
             continue
 
         score = calc_score(req, off, offer_user)
         candidates.append((req, score))
 
-        print("✅ MATCH CANDIDATE:", req.id, "score=", score)
+    candidates.sort(key=lambda x: x[1], reverse=True)
 
-    print("CANDIDATES:", len(candidates))
-
-    if top_n and top_n > 0:
-        candidates = sorted(candidates, key=lambda x: x[1], reverse=True)[:top_n]
+    if top_n:
+        candidates = candidates[:top_n]
 
     created = []
 
     for req, score in candidates:
-
-        print("👉 TRY CREATE:", req.id)
-
-        existing = await session.execute(
-            select(Match).where(
-                Match.request_id == req.id,
-                Match.offer_id == off.id,
-            )
-        )
-
-        if existing.scalar_one_or_none():
-            print("⚠️ already exists:", req.id)
-            continue
-
-        m = Match(
-            request_id=req.id,
-            offer_id=off.id,
-            score=score,
-            status="proposed",
-        )
-
-        session.add(m)
-
-        try:
-            await session.flush()
+        m = await create_match_if_not_exists(session, req, off, score)
+        if m:
             created.append(m)
-            print("🔥 CREATED MATCH:", req.id)
-
-        except Exception as e:
-            print("❌ ERROR:", e)
-            await session.rollback()
-            continue
 
     await session.commit()
-    print("MATCHING OFFER DONE:", len(created))
 
+    print("MATCHING OFFER DONE:", len(created))
     return created
+
+
+# =========================================================
+# 📦 REQUEST → OFFERS (НОВОЕ 🔥)
+# =========================================================
+
+async def find_matches_for_request(
+    session: AsyncSession,
+    request: Request,
+):
+    print("🔥 MATCHING REQUEST STARTED", request.id)
+
+    q = select(Offer)
+    offers = (await session.execute(q)).scalars().all()
+
+    candidates = []
+
+    for off in offers:
+        offer_user = await session.get(User, off.user_id)
+
+        # маршрут
+        if not (city_match(request.from_city, off.from_city) and city_match(request.to_city, off.to_city)):
+            continue
+
+        # даты
+        if request.delivery_date_from and off.trip_date < request.delivery_date_from:
+            continue
+
+        if request.delivery_date_to and off.trip_date > request.delivery_date_to:
+            continue
+
+        # carry
+        if not baggage_compatible(request.carry_type, off.baggage_type):
+            continue
+
+        # transport
+        if not transport_compatible(off.transport_type):
+            continue
+
+        score = calc_score(request, off, offer_user)
+        candidates.append((off, score, offer_user))
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+
+    created = []
+
+    for off, score, _ in candidates:
+        m = await create_match_if_not_exists(session, request, off, score)
+        if m:
+            created.append((m, off, score))
+
+    await session.commit()
+
+    print("MATCHING REQUEST DONE:", len(created))
+    return created
+
 

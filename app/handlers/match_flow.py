@@ -7,11 +7,14 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.paywall import can_access_contacts, spend_contact  # 🔥 NEW
+from app.services.paywall import can_access_contacts, spend_contact
 
 from ..models import Match, Request, Offer, User, Review
 from ..enums import MatchStatus, RowStatus
 from ..config import load_config
+
+# 🔥 НОВЫЕ КНОПКИ
+from app.keyboards import kb_deal_result, kb_fail_reasons
 
 router = Router()
 
@@ -53,24 +56,6 @@ def rating_keyboard(match_id: int):
     return b.as_markup()
 
 
-def value_keyboard(match_id: int):
-    b = InlineKeyboardBuilder()
-    b.button(text="до 1000€", callback_data=f"review:value:{match_id}:1000")
-    b.button(text="до 5000€", callback_data=f"review:value:{match_id}:5000")
-    b.button(text="до 10000€", callback_data=f"review:value:{match_id}:10000")
-    b.button(text="не ценно", callback_data=f"review:value:{match_id}:0")
-    b.adjust(2, 2)
-    return b.as_markup()
-
-
-def yes_no_keyboard(prefix: str, match_id: int):
-    b = InlineKeyboardBuilder()
-    b.button(text="✅ Да", callback_data=f"{prefix}:{match_id}:1")
-    b.button(text="❌ Нет", callback_data=f"{prefix}:{match_id}:0")
-    b.adjust(2)
-    return b.as_markup()
-
-
 # =========================================================
 # 1️⃣ Заказчик предлагает сделку
 # =========================================================
@@ -85,13 +70,11 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
     )
     user = user_res.scalar_one_or_none()
 
-    # 🔥 PAYWALL
     if not user or not await can_access_contacts(session, user):
         await cq.answer("Нужен доступ", show_alert=True)
         await cq.message.answer(PAYWALL_TEXT)
         return
 
-    # 🔥 списание контакта (single)
     await spend_contact(session, user)
 
     if not match or match.status != MatchStatus.proposed:
@@ -128,13 +111,11 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
     )
     user = user_res.scalar_one_or_none()
 
-    # 🔥 PAYWALL
     if not user or not await can_access_contacts(session, user):
         await cq.answer("Нужен доступ", show_alert=True)
         await cq.message.answer(PAYWALL_TEXT)
         return
 
-    # 🔥 списание контакта (single)
     await spend_contact(session, user)
 
     if not match or match.status != MatchStatus.pending:
@@ -168,8 +149,22 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
         text="🧩 Новая сделка PASO",
     )
 
+    # 🔥 ссылка в чат сделки
     await cq.bot.send_message(req_user.tg_user_id, f"💬 Чат сделки: {link}")
     await cq.bot.send_message(offer_user.tg_user_id, f"💬 Чат сделки: {link}")
+
+    # 🔥 НОВЫЙ UX БЛОК
+    await cq.bot.send_message(
+        req_user.tg_user_id,
+        "🤝 После общения выберите результат:",
+        reply_markup=kb_deal_result(match.id)
+    )
+
+    await cq.bot.send_message(
+        offer_user.tg_user_id,
+        "🤝 После общения выберите результат:",
+        reply_markup=kb_deal_result(match.id)
+    )
 
     match.status = MatchStatus.accepted
     req.status = RowStatus.closed
@@ -179,14 +174,52 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
     await cq.message.edit_reply_markup(reply_markup=None)
     await cq.answer("Сделка подтверждена ✅")
 
-    await cq.bot.send_message(
-        req_user.tg_user_id,
-        "⭐️ Поставьте оценку путешественнику:",
-        reply_markup=rating_keyboard(match.id),
+
+# =========================================================
+# 🔥 3️⃣ РЕЗУЛЬТАТ СДЕЛКИ (НОВОЕ)
+# =========================================================
+
+@router.callback_query(F.data.startswith("deal:ok:"))
+async def deal_ok(cq: CallbackQuery):
+    match_id = int(cq.data.split(":")[-1])
+
+    await cq.message.answer(
+        "🎉 Отлично!\n\nСпасибо, что воспользовались PASO 🙌\n\n"
+        "Не забудьте оставить отзыв!"
     )
+
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("deal:fail:"))
+async def deal_fail(cq: CallbackQuery):
+    match_id = int(cq.data.split(":")[-1])
+
+    await cq.message.answer(
+        "Понятно 👌\n\nЧто пошло не так?",
+        reply_markup=kb_fail_reasons(match_id)
+    )
+
+    await cq.answer()
 
 
 # =========================================================
-# остальной код (review) НЕ ТРОГАЕМ
+# 🔥 4️⃣ ПРИЧИНЫ (НОВОЕ)
+# =========================================================
+
+@router.callback_query(F.data.startswith("fail:"))
+async def fail_reason(cq: CallbackQuery):
+    reason = cq.data.split(":")[1]
+
+    await cq.message.answer("Спасибо за ответ 🙌")
+
+    # 👉 позже можно сохранять в БД
+    # print("FAIL REASON:", reason)
+
+    await cq.answer()
+
+
+# =========================================================
+# ⭐ review логика остаётся как есть
 # =========================================================
 

@@ -45,7 +45,7 @@ def load_config() -> Config:
     return Config(
         bot_token=os.environ["BOT_TOKEN"],
         bot_username=(os.getenv("BOT_USERNAME") or "").strip(),
-        database_url=os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./paso.db"),
+        database_url=os.getenv("DATABASE_URL_TEST") or os.getenv("DATABASE_URL"),
         admin_tg_ids=admin_ids,
         match_window_days=int(os.getenv("MATCH_WINDOW_DAYS", "3")),
         top_matches=int(os.getenv("TOP_MATCHES", "3")),
@@ -65,3 +65,5 @@ def load_config() -> Config:
         sub_price_rub=int(os.getenv("SUB_PRICE_RUB", "555")),
         sub_duration_days=int(os.getenv("SUB_DURATION_DAYS", "30")),
     )
+
+

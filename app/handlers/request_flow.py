@@ -12,7 +12,6 @@ from sqlalchemy import select
 
 from app.enums import Category, WeightBand, CarryType, RowStatus
 from app.models import User, Request, Offer
-from app.matching import find_matches_for_offer
 from app.utils import norm
 
 router = Router()
@@ -34,7 +33,7 @@ class RequestFSM(StatesGroup):
     category = State()
     weight_band = State()
     carry_type = State()
-    transport_type = State()  # 🔥 новое
+    transport_type = State()
     time_type = State()
 
 
@@ -83,9 +82,8 @@ def kb_weight():
 
 def kb_carry():
     b = InlineKeyboardBuilder()
-    b.button(text="👜 Ручная кладь", callback_data="c:1")
-    b.button(text="🧳 Багаж", callback_data="c:2")
-    b.button(text="👌 Не важно", callback_data="c:3")
+    b.button(text="🎒 Только ручная кладь", callback_data="c:1")
+    b.button(text="🧳 Можно в багаж", callback_data="c:2")
     b.adjust(1)
     return b.as_markup()
 
@@ -114,11 +112,11 @@ def kb_confirm():
     return b.as_markup()
 
 
-def match_keyboard(match_id: int):
+def match_keyboard(offer_id: int):
     b = InlineKeyboardBuilder()
     b.button(
         text="🔓 Открыть контакт (−1)",
-        callback_data=f"match:contact:{match_id}"
+        callback_data=f"match:contact:{offer_id}"
     )
     return b.as_markup()
 
@@ -160,7 +158,7 @@ async def start_request(cq: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(RequestFSM.from_city)
 
-    await cq.message.answer("📦 Отправить товар\n\n1/6 Откуда?")
+    await cq.message.answer("📦 Отправить посылку\n\n1/6 Откуда?")
     await cq.answer()
 
 
@@ -219,7 +217,7 @@ async def step_weight(cq: CallbackQuery, state: FSMContext):
     await state.update_data(weight_band=mp[cq.data.split(":")[1]].value)
     await state.set_state(RequestFSM.carry_type)
 
-    await cq.message.answer("5/6 Тип перевозки:", reply_markup=kb_carry())
+    await cq.message.answer("5/6 Что можно взять?", reply_markup=kb_carry())
     await cq.answer()
 
 
@@ -228,7 +226,6 @@ async def step_carry(cq: CallbackQuery, state: FSMContext):
     mp = {
         "1": CarryType.hand_only,
         "2": CarryType.luggage_ok,
-        "3": CarryType.any,
     }
 
     await state.update_data(carry_type=mp[cq.data.split(":")[1]].value)
@@ -273,19 +270,14 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
         from_city=data["from_city"],
         to_country="any",
         to_city=data["to_city"],
-
         item_description="товар",
-
         category=data["category"],
         weight_band=data["weight_band"],
         carry_type=data["carry_type"],
-        transport_type=data.get("transport_type", "any"),  # 🔥
-
+        transport_type=data.get("transport_type", "any"),
         reward_mode="none",
-
         delivery_date_from=date_from,
         delivery_date_to=date_to,
-
         status=RowStatus.active,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
@@ -297,23 +289,29 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
     await state.clear()
 
-    matches = await find_matches_for_offer(session, req.id, 5, 0)
+    # 🔥 НОВЫЙ MATCHING (через Match + score)
+    from app.matching import find_matches_for_request
+
+    matches = await find_matches_for_request(session, req)
 
     if not matches:
         return await cq.message.answer("😔 Пока перевозчиков нет")
 
     await cq.message.answer(f"🔥 Найдено {len(matches)} перевозчиков:\n")
 
-    for i, m in enumerate(matches):
+    for i, (m, off, score) in enumerate(matches):
         if i >= 3:
             await cq.message.answer("🔒 Есть ещё перевозчики — открой доступ")
             break
 
-        off = await session.get(Offer, m.offer_id)
         off_user = await session.get(User, off.user_id)
 
+        # 🔥 бейдж лучшего матча
+        badge = "🔥 Лучший вариант\n\n" if i == 0 else ""
+
         await cq.message.answer(
-            format_offer_text(off, off_user),
-            reply_markup=match_keyboard(m.id)
+            badge + format_offer_text(off, off_user),
+            reply_markup=match_keyboard(m.id)  # 👈 ВАЖНО: теперь Match.id
         )
+
 
