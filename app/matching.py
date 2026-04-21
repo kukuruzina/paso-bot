@@ -38,11 +38,15 @@ def baggage_compatible(req_carry, off_baggage) -> bool:
     req = normalize_enum(req_carry)
     off = normalize_enum(off_baggage)
 
-    # если нужен багаж — только если он есть
+    # 👌 без разницы → подходит всё
+    if req == "any":
+        return True
+
+    # 🧳 нужен багаж → только если он есть
     if req == "luggage":
         return off == "luggage"
 
-    # если можно ручную — подходят оба
+    # 🎒 можно ручную → подходят оба
     if req == "hand":
         return off in ("hand", "luggage")
 
@@ -258,5 +262,6 @@ async def find_matches_for_request(
 
     print("MATCHING REQUEST DONE:", len(created))
     return created
+
 
 

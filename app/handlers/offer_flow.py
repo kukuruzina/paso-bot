@@ -30,9 +30,9 @@ class OfferFSM(StatesGroup):
     from_city = State()
     to_city = State()
     trip_date = State()
+    transport_type = State()
     capacity_band = State()
     baggage_type = State()
-    transport_type = State()  # 🔥 новое
 
 
 # ================= HELPERS =================
@@ -178,9 +178,31 @@ async def step_date(cq: CallbackQuery, state: FSMContext):
     d = today + timedelta(days=30) if val == "month" else date.fromisoformat(val)
 
     await state.update_data(trip_date=d.isoformat())
-    await state.set_state(OfferFSM.capacity_band)
 
-    await cq.message.answer("4/6 Вес:", reply_markup=kb_weight())
+    # 🔥 сначала транспорт
+    await state.set_state(OfferFSM.transport_type)
+    await cq.message.answer("4/6 Как передвигаетесь?", reply_markup=kb_transport())
+
+
+def kb_transport():
+    b = InlineKeyboardBuilder()
+    b.button(text="✈️ Самолет", callback_data="o_t:plane")
+    b.button(text="🚗 Машина", callback_data="o_t:car")
+    b.button(text="👌 Не важно", callback_data="o_t:any")
+    b.adjust(1)
+    return b.as_markup()
+
+
+@router.callback_query(F.data.startswith("o_t:"))
+async def step_transport(cq: CallbackQuery, state: FSMContext):
+    await cq.answer()
+
+    val = cq.data.split(":")[1]
+    await state.update_data(transport_type=val)
+
+    # 🔥 потом вес (возможности)
+    await state.set_state(OfferFSM.capacity_band)
+    await cq.message.answer("5/6 Сколько сможете взять?", reply_markup=kb_weight())
 
 
 def kb_weight():
@@ -205,16 +227,16 @@ async def step_weight(cq: CallbackQuery, state: FSMContext):
     }
 
     await state.update_data(capacity_band=mp[cq.data.split(":")[1]])
+
+    # 🔥 потом багаж
     await state.set_state(OfferFSM.baggage_type)
+    await cq.message.answer("6/6 В чем сможете взять?", reply_markup=kb_carry_offer())
 
-    await cq.message.answer("5/6 Тип багажа:", reply_markup=kb_carry())
 
-
-def kb_carry():
+def kb_carry_offer():
     b = InlineKeyboardBuilder()
-    b.button(text="👜 Ручная кладь", callback_data="o_c:1")
-    b.button(text="🧳 Багаж", callback_data="o_c:2")
-    b.button(text="👌 Не важно", callback_data="o_c:3")
+    b.button(text="🎒 Только ручная кладь", callback_data="o_c:1")
+    b.button(text="🧳 Есть багаж (можно всё)", callback_data="o_c:2")
     b.adjust(1)
     return b.as_markup()
 
@@ -224,32 +246,11 @@ async def step_carry(cq: CallbackQuery, state: FSMContext):
     await cq.answer()
 
     mp = {
-        "1": CarryType.hand_only,
-        "2": CarryType.luggage_ok,
-        "3": CarryType.any,
+        "1": "hand",
+        "2": "luggage",
     }
 
     await state.update_data(baggage_type=mp[cq.data.split(":")[1]])
-    await state.set_state(OfferFSM.transport_type)
-
-    await cq.message.answer("6/6 Как передвигаетесь?", reply_markup=kb_transport())
-
-
-def kb_transport():
-    b = InlineKeyboardBuilder()
-    b.button(text="✈️ Самолет", callback_data="o_t:plane")
-    b.button(text="🚗 Машина", callback_data="o_t:car")
-    b.button(text="👌 Не важно", callback_data="o_t:any")
-    b.adjust(1)
-    return b.as_markup()
-
-
-@router.callback_query(F.data.startswith("o_t:"))
-async def step_transport(cq: CallbackQuery, state: FSMContext):
-    await cq.answer()
-
-    val = cq.data.split(":")[1]
-    await state.update_data(transport_type=val)
 
     await cq.message.answer(RULES_TEXT)
     await cq.message.answer("👇", reply_markup=kb_confirm())
