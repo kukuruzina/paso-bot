@@ -210,57 +210,127 @@ async def find_matches_for_offer(
 
 
 # =========================================================
-# 📦 REQUEST → OFFERS (НОВОЕ 🔥)
+# 📦 REQUEST → OFFERS
 # =========================================================
 
 async def find_matches_for_request(
     session: AsyncSession,
-    request: Request,
+    request_id: int,
+    window_days: int,
+    top_n: int,
 ):
-    print("🔥 MATCHING REQUEST STARTED", request.id)
 
-    q = select(Offer)
+    print("🔥 MATCHING REQUEST STARTED", request_id)
+
+    req = await session.get(Request, request_id)
+    if not req:
+        print("❌ Request not found")
+        return []
+
+    q = select(Offer).where(Offer.status == RowStatus.active)
     offers = (await session.execute(q)).scalars().all()
+
+    print("Found offers:", len(offers))
 
     candidates = []
 
     for off in offers:
-        offer_user = await session.get(User, off.user_id)
+
+        print(
+            "🔍 CHECK:",
+            off.id,
+            off.from_city,
+            "→",
+            off.to_city,
+            "|",
+            req.from_city,
+            "→",
+            req.to_city,
+        )
 
         # маршрут
-        if not (city_match(request.from_city, off.from_city) and city_match(request.to_city, off.to_city)):
+        if not (city_match(req.from_city, off.from_city) and city_match(req.to_city, off.to_city)):
+            print("❌ skip: city mismatch")
             continue
 
-        # даты
-        if request.delivery_date_from and off.trip_date < request.delivery_date_from:
+        # даты (две стороны)
+        if req.delivery_date_from and off.trip_date < req.delivery_date_from:
+            print("❌ skip: too early")
             continue
 
-        if request.delivery_date_to and off.trip_date > request.delivery_date_to:
+        if req.delivery_date_to and off.trip_date > req.delivery_date_to:
+            print("❌ skip: too late")
             continue
 
         # carry
-        if not baggage_compatible(request.carry_type, off.baggage_type):
+        if not baggage_compatible(req.carry_type, off.baggage_type):
+            print("❌ skip: carry mismatch")
             continue
 
-        # transport
+        # transport (пока мягкий)
         if not transport_compatible(off.transport_type):
+            print("❌ skip: transport mismatch")
             continue
 
-        score = calc_score(request, off, offer_user)
-        candidates.append((off, score, offer_user))
+        offer_user = await session.get(User, off.user_id)
 
-    candidates.sort(key=lambda x: x[1], reverse=True)
+        score = calc_score(req, off, offer_user)
+        candidates.append((off, score))
+
+        print("✅ MATCH CANDIDATE:", off.id, "score=", score)
+
+    print("CANDIDATES:", len(candidates))
+
+    # 🔥 сортировка
+    candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
+
+    # 🔥 топ N
+    if top_n and top_n > 0:
+        candidates = candidates[:top_n]
 
     created = []
 
-    for off, score, _ in candidates:
-        m = await create_match_if_not_exists(session, request, off, score)
-        if m:
-            created.append((m, off, score))
+    for off, score in candidates:
+
+        print("👉 TRY CREATE:", off.id)
+
+        existing = await session.execute(
+            select(Match).where(
+                Match.request_id == req.id,
+                Match.offer_id == off.id,
+            )
+        )
+
+        existing_match = existing.scalar_one_or_none()
+
+        if existing_match:
+            print("⚠️ already exists:", off.id)
+            created.append(existing_match)
+            continue
+
+        m = Match(
+            request_id=req.id,
+            offer_id=off.id,
+            score=score,
+            status="proposed",
+        )
+
+        session.add(m)
+
+        try:
+            await session.flush()
+            created.append(m)
+            print("🔥 CREATED MATCH:", off.id)
+
+        except Exception as e:
+            print("❌ ERROR:", e)
+            await session.rollback()
+            continue
 
     await session.commit()
 
     print("MATCHING REQUEST DONE:", len(created))
+
     return created
 
 

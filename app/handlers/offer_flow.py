@@ -33,6 +33,7 @@ class OfferFSM(StatesGroup):
     transport_type = State()
     capacity_band = State()
     baggage_type = State()
+    confirm = State( )
 
 
 # ================= HELPERS =================
@@ -43,11 +44,26 @@ async def get_user(session, tg_user_id):
 
 
 def format_request_text(req: Request, user: User | None, transport_type: str):
+    # рейтинг
     if user and user.rating_count:
         rating_str = f"{round(user.rating_avg,1)}⭐({user.rating_count})"
     else:
         rating_str = "новый"
 
+    # 🔥 время → из диапазона в текст
+    if not req.delivery_date_from or not req.delivery_date_to:
+        time_str = "как можно быстрее"
+    else:
+        delta = (req.delivery_date_to - req.delivery_date_from).days
+
+        if delta <= 7:
+            time_str = "ближайшие дни"
+        elif delta <= 14:
+            time_str = "1–2 недели"
+        else:
+            time_str = "в течение месяца"
+
+    # 🔥 вес
     weight_map = {
         "lt1": "до 1 кг",
         "w1_3": "1–3 кг",
@@ -55,17 +71,18 @@ def format_request_text(req: Request, user: User | None, transport_type: str):
         "gt5": "5+ кг",
     }
 
-    transport_map = {
-        "plane": "✈️ Самолет",
-        "car": "🚗 Машина",
-        "any": "любой",
+    # 🔥 перевозка (одно слово!)
+    carry_map = {
+        "hand": "ручная кладь",
+        "luggage": "багаж",
+        "any": "не важно",
     }
 
     return (
         f"📦 {req.from_city} → {req.to_city}\n"
-        f"📅 Нужно до: {req.delivery_date_to.strftime('%d.%m')}\n"
+        f"📅 Нужно: {time_str}\n"
         f"🎒 Вес: {weight_map.get(str(req.weight_band), req.weight_band)}\n"
-        f"🚘 Тип: {transport_map.get(transport_type, 'любой')}\n\n"
+        f"🧳 Перевозка: {carry_map.get(str(req.carry_type), '')}\n\n"
         f"👤 Рейтинг: {rating_str}"
     )
 
@@ -188,7 +205,6 @@ def kb_transport():
     b = InlineKeyboardBuilder()
     b.button(text="✈️ Самолет", callback_data="o_t:plane")
     b.button(text="🚗 Машина", callback_data="o_t:car")
-    b.button(text="👌 Не важно", callback_data="o_t:any")
     b.adjust(1)
     return b.as_markup()
 
@@ -236,7 +252,7 @@ async def step_weight(cq: CallbackQuery, state: FSMContext):
 def kb_carry_offer():
     b = InlineKeyboardBuilder()
     b.button(text="🎒 Только ручная кладь", callback_data="o_c:1")
-    b.button(text="🧳 Есть багаж (можно всё)", callback_data="o_c:2")
+    b.button(text="🧳 Есть багаж", callback_data="o_c:2")
     b.adjust(1)
     return b.as_markup()
 
@@ -252,9 +268,11 @@ async def step_carry(cq: CallbackQuery, state: FSMContext):
 
     await state.update_data(baggage_type=mp[cq.data.split(":")[1]])
 
+    # 🔥 ВАЖНО: финальное состояние
+    await state.set_state(OfferFSM.confirm)
+
     await cq.message.answer(RULES_TEXT)
     await cq.message.answer("👇", reply_markup=kb_confirm())
-
 
 def kb_confirm():
     b = InlineKeyboardBuilder()
@@ -269,6 +287,9 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
     await cq.answer()
 
     user = await get_user(session, cq.from_user.id)
+    if not user:
+        return await cq.message.answer("❌ Пользователь не найден")
+
     data = await state.get_data()
 
     offer = Offer(
@@ -280,7 +301,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
         trip_date=date.fromisoformat(data["trip_date"]),
         capacity_band=data["capacity_band"],
         baggage_type=data["baggage_type"],
-        transport_type=data.get("transport_type", "any"),  # 🔥
+        transport_type=data.get("transport_type", "any"),
         price_mode="discuss",
         status=RowStatus.active,
         created_at=datetime.utcnow(),
@@ -293,14 +314,24 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     await state.clear()
 
-    matches = await find_matches_for_offer(session, offer.id, 5, 0)
+    # 🔥 MATCHING: offer → requests
+    from app.matching import find_matches_for_offer
+
+    matches = await find_matches_for_offer(
+        session,
+        offer.id,
+        window_days=0,
+        top_n=5
+    )
 
     if not matches:
-        return await cq.message.answer("😔 Пока заявок нет")
+        return await cq.message.answer("😔 Пока подходящих заявок нет")
 
     await cq.message.answer(f"🔥 Найдено {len(matches)} заявок:\n")
 
+    # 📦 ПОКАЗ ТЕКУЩЕМУ ПОЛЬЗОВАТЕЛЮ
     for i, m in enumerate(matches):
+
         if i >= 3:
             await cq.message.answer("🔒 Есть ещё заявки — открой доступ")
             break
@@ -312,4 +343,42 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
             format_request_text(req, req_user, offer.transport_type),
             reply_markup=match_keyboard(m.id)
         )
+
+    # 🔔 PUSH: уведомляем отправителей (без дублей)
+    for m in matches:
+
+        # ❗ защита если колонка ещё не везде
+        if getattr(m, "notified_requester", False):
+            continue
+
+        req = await session.get(Request, m.request_id)
+        req_user = await session.get(User, req.user_id)
+
+        if req_user.tg_user_id == cq.from_user.id:
+            continue
+
+        try:
+            await cq.bot.send_message(
+                req_user.tg_user_id,
+                "🔥 Появился перевозчик под вашу заявку:\n",
+            )
+
+            off_user = await session.get(User, offer.user_id)
+
+            await cq.bot.send_message(
+                req_user.tg_user_id,
+                format_offer_text(offer, off_user),
+                reply_markup=match_keyboard(m.id),
+            )
+
+            # 🔥 помечаем как отправленный
+            m.notified_requester = True
+
+        except Exception as e:
+            print("❌ PUSH ERROR (request user):", e)
+
+    # 🔥 СОХРАНЯЕМ
+    await session.commit()
+
+
 

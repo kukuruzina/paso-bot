@@ -220,6 +220,9 @@ class Match(Base):
 
     status: Mapped[str] = mapped_column(String(16), default="proposed", nullable=False)
 
+    notified_requester: Mapped[bool] = mapped_column(default=False)
+    notified_carrier: Mapped[bool] = mapped_column(default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -268,6 +271,8 @@ class Review(Base):
     had_docs: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 
 
 

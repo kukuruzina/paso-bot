@@ -22,7 +22,7 @@ class Config:
     # Stripe
     stripe_secret_key: str | None
     stripe_webhook_secret: str | None
-    public_base_url: str  # лучше не None
+    public_base_url: str
 
     # Subscription
     sub_price_eur: int
@@ -39,13 +39,23 @@ def load_config() -> Config:
     )
 
     deals_raw = (os.getenv("DEALS_CHAT_ID") or "").strip()
-
     public_base_url = (os.getenv("PUBLIC_BASE_URL") or "http://127.0.0.1:8000").strip()
+
+    # 🔥 ВЫБОР БАЗЫ
+    env = os.getenv("ENV", "test")
+
+    if env == "prod":
+        db_url = os.getenv("DATABASE_URL_PROD")
+    else:
+        db_url = os.getenv("DATABASE_URL_TEST")
+
+    if not db_url:
+        raise ValueError("❌ DATABASE_URL не задан для текущего ENV")
 
     return Config(
         bot_token=os.environ["BOT_TOKEN"],
         bot_username=(os.getenv("BOT_USERNAME") or "").strip(),
-        database_url=os.getenv("DATABASE_URL_TEST") or os.getenv("DATABASE_URL"),
+        database_url=db_url,  # 🔥 ГЛАВНОЕ ИЗМЕНЕНИЕ
         admin_tg_ids=admin_ids,
         match_window_days=int(os.getenv("MATCH_WINDOW_DAYS", "3")),
         top_matches=int(os.getenv("TOP_MATCHES", "3")),
@@ -65,5 +75,6 @@ def load_config() -> Config:
         sub_price_rub=int(os.getenv("SUB_PRICE_RUB", "555")),
         sub_duration_days=int(os.getenv("SUB_DURATION_DAYS", "30")),
     )
+
 
 

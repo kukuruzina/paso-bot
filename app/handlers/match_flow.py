@@ -176,6 +176,68 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
 
 
 # =========================================================
+# 🔓 ОТКРЫТЬ КОНТАКТ (PAYWALL)
+# =========================================================
+
+@router.callback_query(F.data.startswith("match:contact:"))
+async def open_contact(cq: CallbackQuery, session: AsyncSession):
+    await cq.answer()
+
+    match_id = int(cq.data.split(":")[-1])
+    match = await session.get(Match, match_id)
+
+    if not match:
+        return await cq.message.answer("❌ Матч не найден")
+
+    # 👤 текущий пользователь
+    user_res = await session.execute(
+        select(User).where(User.tg_user_id == cq.from_user.id)
+    )
+    user = user_res.scalar_one_or_none()
+
+    # 🔒 PAYWALL
+    if not user or not await can_access_contacts(session, user):
+        await cq.answer("Нужен доступ", show_alert=True)
+        await cq.message.answer(PAYWALL_TEXT)
+        return
+
+    # 💸 списание контакта
+    await spend_contact(session, user)
+
+    # 📦 данные сделки
+    req = await session.get(Request, match.request_id)
+    off = await session.get(Offer, match.offer_id)
+
+    req_user = await session.get(User, req.user_id)
+    off_user = await session.get(User, off.user_id)
+
+    # 🔍 определяем, кому показывать контакт
+    if user.tg_user_id == req_user.tg_user_id:
+        other = off_user
+    else:
+        other = req_user
+
+    # 📞 выдача контакта
+    contact_text = (
+        "📞 Контакт:\n\n"
+        f"👤 {other.first_name or 'Пользователь'}\n"
+    )
+
+    if other.tg_username:
+        contact_text += f"🔗 @{other.tg_username}\n"
+    else:
+        contact_text += "⚠️ У пользователя нет username — пишите в чате сделки\n"
+
+    await cq.message.answer(contact_text)
+
+    # 🔥 убираем кнопку после использования (опционально)
+    try:
+        await cq.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass
+
+
+# =========================================================
 # 🔥 3️⃣ РЕЗУЛЬТАТ СДЕЛКИ (НОВОЕ)
 # =========================================================
 
@@ -222,4 +284,5 @@ async def fail_reason(cq: CallbackQuery):
 # =========================================================
 # ⭐ review логика остаётся как есть
 # =========================================================
+
 
