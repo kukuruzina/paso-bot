@@ -57,7 +57,7 @@ def rating_keyboard(match_id: int):
 
 
 # =========================================================
-# 1️⃣ Заказчик предлагает сделку
+# 1️⃣ Предложение сделки (универсально: и заказчик, и исполнитель)
 # =========================================================
 
 @router.callback_query(F.data.startswith("match:propose:"))
@@ -82,23 +82,44 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
         return
 
     offer = await session.get(Offer, match.offer_id)
+    req = await session.get(Request, match.request_id)
+
     offer_user = await session.get(User, offer.user_id)
+    req_user = await session.get(User, req.user_id)
 
     match.status = MatchStatus.pending
     await session.commit()
 
     await cq.message.edit_reply_markup(reply_markup=None)
-    await cq.answer("Предложение отправлено исполнителю ✅")
+    await cq.answer("Предложение отправлено ✅")
+
+    # 👉 карточка оффера (без циклического импорта)
+    try:
+        from app.handlers.request_flow import format_offer_text
+        offer_text = format_offer_text(offer, offer_user)
+    except Exception as e:
+        print("format error:", e)
+        offer_text = f"{offer.from_city} → {offer.to_city}"
+
+    # 👉 определяем кому отправлять
+    if user.id == offer_user.id:
+        # исполнитель предлагает заказчику
+        target_user = req_user
+        text_prefix = "📦 Перевозчик предлагает выполнить ваш заказ:"
+    else:
+        # заказчик предлагает исполнителю
+        target_user = offer_user
+        text_prefix = "📦 Заказчик предлагает вам заказ:"
 
     await cq.bot.send_message(
-        offer_user.tg_user_id,
-        "📦 Вам предложили сделку.\n\nНажмите кнопку ниже, чтобы принять.",
+        target_user.tg_user_id,
+        f"{text_prefix}\n\n{offer_text}\n\n👇 Нажмите кнопку ниже, чтобы принять",
         reply_markup=accept_keyboard(match.id),
     )
 
 
 # =========================================================
-# 2️⃣ Исполнитель принимает
+# 2️⃣ Принятие сделки
 # =========================================================
 
 @router.callback_query(F.data.startswith("match:accept:"))
@@ -149,30 +170,12 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
         text="🧩 Новая сделка PASO",
     )
 
-    # 🔥 ссылка в чат сделки
-    await cq.bot.send_message(req_user.tg_user_id, f"💬 Чат сделки: {link}")
-    await cq.bot.send_message(offer_user.tg_user_id, f"💬 Чат сделки: {link}")
-
-    # 🔥 НОВЫЙ UX БЛОК
-    await cq.bot.send_message(
-        req_user.tg_user_id,
-        "🤝 После общения выберите результат:",
-        reply_markup=kb_deal_result(match.id)
-    )
-
-    await cq.bot.send_message(
-        offer_user.tg_user_id,
-        "🤝 После общения выберите результат:",
-        reply_markup=kb_deal_result(match.id)
-    )
-
-    match.status = MatchStatus.accepted
-    req.status = RowStatus.closed
-
-    await session.commit()
-
-    await cq.message.edit_reply_markup(reply_markup=None)
-    await cq.answer("Сделка подтверждена ✅")
+    # 👉 карточка оффера
+    try:
+        from app.handlers.request_flow import format_offer_text
+        offer_text = format_offer_text(offer, offer_user)
+    except Exception as e:
+        print("format error:", e)
 
 
 # =========================================================
@@ -284,5 +287,6 @@ async def fail_reason(cq: CallbackQuery):
 # =========================================================
 # ⭐ review логика остаётся как есть
 # =========================================================
+
 
 

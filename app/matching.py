@@ -38,35 +38,32 @@ def baggage_compatible(req_carry, off_baggage) -> bool:
     req = normalize_enum(req_carry)
     off = normalize_enum(off_baggage)
 
-    # 👌 без разницы → подходит всё
+    # 👌 без разницы
     if req == "any":
+        return True
+
+    # 🎒 можно / нужно в ручной → подходит всё
+    if req == "hand":
         return True
 
     # 🧳 нужен багаж → только если он есть
     if req == "luggage":
         return off == "luggage"
 
-    # 🎒 можно ручную → подходят оба
-    if req == "hand":
-        return off in ("hand", "luggage")
-
     return False
 
 # ================= TRANSPORT =================
 
-def transport_compatible(off_transport):
-    return True  # пока не фильтруем
+def transport_compatible(req_transport, off_transport) -> bool:
+    req = normalize_enum(req_transport)
+    off = normalize_enum(off_transport)
 
-
-def transport_match(req_transport, off_transport):
-    req_transport = normalize_enum(req_transport)
-    off_transport = normalize_enum(off_transport)
-
-    if req_transport == "any" or off_transport == "any":
+    # 👌 любой транспорт подходит
+    if req == "any" or off == "any":
         return True
 
-    return req_transport == off_transport
-
+    # строгий матч
+    return req == off
 
 # ================= CITY =================
 
@@ -116,10 +113,14 @@ def calc_score(req: Request, off: Offer, offer_user: User | None) -> int:
 
 
 # =========================================================
-# 🔧 ОБЩИЙ МЕТОД СОЗДАНИЯ MATCH
+# 🔧 ОБЩИЙ МЕТОД СОЗДАНИЯ MATCH (safe)
 # =========================================================
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
 async def create_match_if_not_exists(session, req: Request, off: Offer, score: int):
+    # 🔍 проверяем существование
     existing = await session.execute(
         select(Match).where(
             Match.request_id == req.id,
@@ -135,10 +136,22 @@ async def create_match_if_not_exists(session, req: Request, off: Offer, score: i
         offer_id=off.id,
         score=score,
         status="proposed",
+
+        notified=False,              # 🔥 ДОБАВИТЬ
+        notified_requester=False,    # (на всякий случай)
+        notified_carrier=False,      # (на всякий случай)
     )
 
     session.add(m)
-    return m
+
+    try:
+        # 🔥 ключевой момент — ловим гонку
+        await session.flush()
+        return m
+
+    except IntegrityError:
+        # 💣 если параллельно создался такой же match
+        return None
 
 
 # =========================================================
@@ -169,6 +182,12 @@ async def find_matches_for_offer(
 
     for req in requests:
 
+        print("---- CHECK ----")
+        print("REQ:", req.id, req.from_city, req.to_city, req.transport_type)
+        print("OFF:", off.id, off.from_city, off.to_city, off.transport_type)
+        print("DATES:", off.trip_date, req.delivery_date_from, req.delivery_date_to)
+        print("CARRY:", req.carry_type, off.baggage_type)
+
         # маршрут
         if not (city_match(req.from_city, off.from_city) and city_match(req.to_city, off.to_city)):
             continue
@@ -185,7 +204,8 @@ async def find_matches_for_offer(
             continue
 
         # transport
-        if not transport_compatible(off.transport_type):
+        if not transport_compatible(req.transport_type, off.transport_type):
+            print("❌ transport mismatch:", req.transport_type, off.transport_type)
             continue
 
         score = calc_score(req, off, offer_user)
@@ -236,17 +256,11 @@ async def find_matches_for_request(
 
     for off in offers:
 
-        print(
-            "🔍 CHECK:",
-            off.id,
-            off.from_city,
-            "→",
-            off.to_city,
-            "|",
-            req.from_city,
-            "→",
-            req.to_city,
-        )
+        print("---- CHECK ----")
+        print("REQ:", req.id, req.from_city, req.to_city, req.transport_type)
+        print("OFF:", off.id, off.from_city, off.to_city, off.transport_type)
+        print("DATES:", off.trip_date, req.delivery_date_from, req.delivery_date_to)
+        print("CARRY:", req.carry_type, off.baggage_type)
 
         # маршрут
         if not (city_match(req.from_city, off.from_city) and city_match(req.to_city, off.to_city)):
@@ -268,8 +282,8 @@ async def find_matches_for_request(
             continue
 
         # transport (пока мягкий)
-        if not transport_compatible(off.transport_type):
-            print("❌ skip: transport mismatch")
+        if not transport_compatible(req.transport_type, off.transport_type):
+            print("❌ skip: transport mismatch", req.transport_type, off.transport_type)
             continue
 
         offer_user = await session.get(User, off.user_id)
@@ -313,8 +327,11 @@ async def find_matches_for_request(
             offer_id=off.id,
             score=score,
             status="proposed",
-        )
 
+            notified=False,              # 🔥 ДОБАВИТЬ
+            notified_requester=False,    # (на всякий случай)
+            notified_carrier=False,      # (на всякий случай)
+        )
         session.add(m)
 
         try:
@@ -324,7 +341,6 @@ async def find_matches_for_request(
 
         except Exception as e:
             print("❌ ERROR:", e)
-            await session.rollback()
             continue
 
     await session.commit()
@@ -332,6 +348,7 @@ async def find_matches_for_request(
     print("MATCHING REQUEST DONE:", len(created))
 
     return created
+
 
 
 

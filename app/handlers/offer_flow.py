@@ -12,6 +12,7 @@ from app.models import User, Offer, Request
 from app.enums import WeightBand, CarryType, RowStatus
 from app.matching import find_matches_for_offer
 from app.utils import norm
+from app.handlers.request_flow import format_offer_text
 
 router = Router()
 
@@ -286,21 +287,48 @@ def kb_confirm():
 async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSession):
     await cq.answer()
 
+    # 🔥 1. ПРОВЕРКА STATE (защита от старых кнопок)
+    current_state = await state.get_state()
+    if current_state != OfferFSM.confirm.state:
+        await state.clear()
+        return await cq.message.answer(
+            "❌ Сессия устарела, начните заново /start"
+        )
+
     user = await get_user(session, cq.from_user.id)
     if not user:
         return await cq.message.answer("❌ Пользователь не найден")
 
     data = await state.get_data()
 
+    # 🔥 2. ПРОВЕРКА ДАННЫХ (защита от потери FSM)
+    required_fields = [
+        "from_city",
+        "to_city",
+        "trip_date",
+        "capacity_band",
+        "baggage_type",
+    ]
+
+    missing = [f for f in required_fields if not data.get(f)]
+
+    if missing:
+        print("❌ FSM DATA MISSING:", missing, data)
+        await state.clear()
+        return await cq.message.answer(
+            "❌ Данные потерялись. Пожалуйста создайте поездку заново /start"
+        )
+
+    # 🔥 3. СОЗДАЁМ OFFER
     offer = Offer(
         user_id=user.id,
         from_country="any",
-        from_city=data["from_city"],
+        from_city=data.get("from_city"),
         to_country="any",
-        to_city=data["to_city"],
-        trip_date=date.fromisoformat(data["trip_date"]),
-        capacity_band=data["capacity_band"],
-        baggage_type=data["baggage_type"],
+        to_city=data.get("to_city"),
+        trip_date=date.fromisoformat(data.get("trip_date")),
+        capacity_band=data.get("capacity_band"),
+        baggage_type=data.get("baggage_type"),
         transport_type=data.get("transport_type", "any"),
         price_mode="discuss",
         status=RowStatus.active,
@@ -314,7 +342,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     await state.clear()
 
-    # 🔥 MATCHING: offer → requests
+    # 🔥 4. MATCHING
     from app.matching import find_matches_for_offer
 
     matches = await find_matches_for_offer(
@@ -325,11 +353,12 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
     )
 
     if not matches:
-        return await cq.message.answer("😔 Пока подходящих заявок нет")
+        await cq.message.answer("😔 Пока подходящих заявок нет")
+        return await cq.message.edit_reply_markup(reply_markup=None)
 
     await cq.message.answer(f"🔥 Найдено {len(matches)} заявок:\n")
 
-    # 📦 ПОКАЗ ТЕКУЩЕМУ ПОЛЬЗОВАТЕЛЮ
+# 📦 ПОКАЗ ПЕРЕВОЗЧИКУ
     for i, m in enumerate(matches):
 
         if i >= 3:
@@ -337,48 +366,66 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
             break
 
         req = await session.get(Request, m.request_id)
+        if not req:
+            continue
+
         req_user = await session.get(User, req.user_id)
 
         await cq.message.answer(
             format_request_text(req, req_user, offer.transport_type),
-            reply_markup=match_keyboard(m.id)
+            reply_markup=match_keyboard(m.id),
         )
+
 
     # 🔔 PUSH: уведомляем отправителей (без дублей)
     for m in matches:
 
-        # ❗ защита если колонка ещё не везде
+        # уже отправляли
         if getattr(m, "notified_requester", False):
             continue
 
         req = await session.get(Request, m.request_id)
+        if not req:
+            continue
+
         req_user = await session.get(User, req.user_id)
 
-        if req_user.tg_user_id == cq.from_user.id:
+        # не пушим самому себе
+        if not req_user or req_user.tg_user_id == cq.from_user.id:
             continue
 
         try:
+            off_user = await session.get(User, offer.user_id)
+
+            # сообщение 1
             await cq.bot.send_message(
                 req_user.tg_user_id,
                 "🔥 Появился перевозчик под вашу заявку:\n",
             )
 
-            off_user = await session.get(User, offer.user_id)
-
+            # сообщение 2 (карточка перевозчика)
             await cq.bot.send_message(
                 req_user.tg_user_id,
                 format_offer_text(offer, off_user),
                 reply_markup=match_keyboard(m.id),
             )
 
-            # 🔥 помечаем как отправленный
+            # ✅ ставим флаг только после успеха
             m.notified_requester = True
 
-        except Exception as e:
-            print("❌ PUSH ERROR (request user):", e)
+            print(f"📤 PUSH SENT (requester): match_id={m.id}")
 
-    # 🔥 СОХРАНЯЕМ
+        except Exception as e:
+            import traceback
+            print("❌ PUSH ERROR (request user):", e)
+            traceback.print_exc()
+
+
+    # 🔥 сохраняем изменения
     await session.commit()
+
+
+
 
 
 

@@ -191,9 +191,61 @@ def format_offer_text(off: Offer, user: User | None):
         f"✈️ {off.from_city} → {off.to_city}\n"
         f"📅 Дата: {off.trip_date.strftime('%d.%m')}\n"
         f"🎒 Место: {weight_map.get(str(off.capacity_band), off.capacity_band)}\n"
-        f"🚘 Тип: {transport_map.get(str(off.transport_type), 'любой')}\n\n"
+        f"🧳 Тип: {transport_map.get(str(off.transport_type), 'любой')}\n\n"
         f"👤 Рейтинг: {rating_str}"
     )
+
+def format_request_text(req: Request, user: User | None, transport_type: str | None):
+    try:
+        # рейтинг
+        if user and user.rating_count:
+            rating_str = f"{round(user.rating_avg,1)}⭐({user.rating_count})"
+        else:
+            rating_str = "новый"
+
+        # вес
+        weight_map = {
+            "lt1": "до 1 кг",
+            "w1_3": "1–3 кг",
+            "w3_5": "3–5 кг",
+            "gt5": "5+ кг",
+        }
+
+        weight_str = weight_map.get(str(req.weight_band), "до 1 кг")
+
+        # транспорт
+        transport_map = {
+            "plane": "самолет",
+            "car": "машина",
+            "any": "не важно",
+        }
+
+        transport_str = transport_map.get(str(transport_type), "не важно")
+
+        # срок
+        if req.delivery_date_from and req.delivery_date_to:
+            days = (req.delivery_date_to - req.delivery_date_from).days
+
+            if days <= 3:
+                time_str = "ближайшие дни"
+            elif days <= 14:
+                time_str = "1–2 недели"
+            else:
+                time_str = "в течение месяца"
+        else:
+            time_str = "по договорённости"
+
+        return (
+            f"📦 {req.from_city} → {req.to_city}\n"
+            f"📅 Нужно: {time_str}\n"
+            f"🎒 Вес: {weight_str}\n"
+            f"🧳 Перевозка: {transport_str}\n\n"
+            f"👤 Рейтинг: {rating_str}"
+        )
+
+    except Exception as e:
+        print("❌ format_request_text ERROR:", e)
+        return "📦 Ошибка отображения заявки"
 
 
 # ================= FLOW =================
@@ -310,25 +362,53 @@ async def step_time(cq: CallbackQuery, state: FSMContext):
 async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSession):
     await cq.answer()
 
+    # 🔥 1. ПРОВЕРКА STATE (защита от старых кнопок)
+    current_state = await state.get_state()
+    if current_state != RequestFSM.confirm.state:
+        await state.clear()
+        return await cq.message.answer(
+            "❌ Сессия устарела, начните заново /start"
+        )
+
     user = await get_user(session, cq.from_user.id)
     if not user:
         return await cq.message.answer("❌ Пользователь не найден")
 
     data = await state.get_data()
 
+    # 🔥 2. ПРОВЕРКА ДАННЫХ (защита от потери FSM)
+    required_fields = [
+        "from_city",
+        "to_city",
+        "category",
+        "weight_band",
+        "carry_type",
+    ]
+
+    missing = [f for f in required_fields if not data.get(f)]
+
+    if missing:
+        print("❌ FSM DATA MISSING:", missing, data)
+        await state.clear()
+        return await cq.message.answer(
+            "❌ Данные потерялись. Пожалуйста создайте заявку заново /start"
+        )
+
+    # 🔥 3. ДАТЫ
     time_type = data.get("time_type", "soon")
     date_from, date_to = request_to_range(time_type)
 
+    # 🔥 4. СОЗДАЁМ REQUEST
     req = Request(
         user_id=user.id,
         from_country="any",
-        from_city=data["from_city"],
+        from_city=data.get("from_city"),
         to_country="any",
-        to_city=data["to_city"],
+        to_city=data.get("to_city"),
         item_description="товар",
-        category=data["category"],
-        weight_band=data["weight_band"],
-        carry_type=data["carry_type"],
+        category=data.get("category"),
+        weight_band=data.get("weight_band"),
+        carry_type=data.get("carry_type"),
         transport_type=data.get("transport_type", "any"),
         reward_mode="none",
         delivery_date_from=date_from,
@@ -344,7 +424,7 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
     await state.clear()
 
-    # 🔥 MATCHING
+    # 🔥 5. MATCHING
     from app.matching import find_matches_for_request
 
     matches = await find_matches_for_request(
@@ -355,17 +435,19 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
     )
 
     if not matches:
-        return await cq.message.answer("😔 Пока перевозчиков нет")
+        await cq.message.answer("😔 Пока перевозчиков нет")
+        return await cq.message.edit_reply_markup(reply_markup=None)
 
     await cq.message.answer(f"🔥 Найдено {len(matches)} перевозчиков:\n")
 
-    # 📦 ПОКАЗ ТЕКУЩЕМУ ПОЛЬЗОВАТЕЛЮ
-    for i, (m, off, score) in enumerate(matches):
+# 📦 ПОКАЗ ПОЛЬЗОВАТЕЛЮ
+    for i, m in enumerate(matches):
 
         if i >= 3:
             await cq.message.answer("🔒 Есть ещё перевозчики — открой доступ")
             break
 
+        off = await session.get(Offer, m.offer_id)
         off_user = await session.get(User, off.user_id)
 
         badge = "🔥 Лучший вариант\n\n" if i == 0 else ""
@@ -375,37 +457,50 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
             reply_markup=match_keyboard(m.id),
         )
 
+
     # 🔔 PUSH: уведомляем перевозчиков (без дублей)
-    for (m, off, score) in matches:
+    for m in matches:
 
         if getattr(m, "notified_carrier", False):
             continue
 
+        off = await session.get(Offer, m.offer_id)
         off_user = await session.get(User, off.user_id)
 
-        if off_user.tg_user_id == cq.from_user.id:
+        if not off_user or off_user.tg_user_id == cq.from_user.id:
             continue
 
         try:
+            # сообщение 1
             await cq.bot.send_message(
                 off_user.tg_user_id,
                 "🔥 Появилась новая заявка под вашу поездку:\n",
             )
 
+            # сообщение 2
             await cq.bot.send_message(
                 off_user.tg_user_id,
                 format_request_text(req, user, off.transport_type),
                 reply_markup=match_keyboard(m.id),
             )
 
-            # 🔥 помечаем как отправленный
+            # ✅ флаг
             m.notified_carrier = True
 
-        except Exception as e:
-            print("❌ PUSH ERROR (offer user):", e)
+            print(f"📤 PUSH SENT (carrier): match_id={m.id}")
 
-    # 🔥 СОХРАНЯЕМ ФЛАГИ
+        except Exception as e:
+            import traceback
+            print("❌ PUSH ERROR:", e)
+            traceback.print_exc()
+
+
+    # 🔥 сохраняем изменения
     await session.commit()
+
+
+
+
 
 
 
