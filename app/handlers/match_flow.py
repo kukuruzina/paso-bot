@@ -224,16 +224,12 @@ async def open_contact(cq: CallbackQuery, session: AsyncSession):
     contact_text = (
         "📞 Контакт:\n\n"
         f"👤 {other.first_name or 'Пользователь'}\n"
+        f"🔗 @{other.tg_username}\n"
     )
-
-    if other.tg_username:
-        contact_text += f"🔗 @{other.tg_username}\n"
-    else:
-        contact_text += "⚠️ У пользователя нет username — пишите в чате сделки\n"
 
     await cq.message.answer(contact_text)
 
-    # 🔥 убираем кнопку после использования (опционально)
+    # 🔥 убираем кнопку после использования
     try:
         await cq.message.edit_reply_markup(reply_markup=None)
     except:
@@ -287,6 +283,8 @@ async def fail_reason(cq: CallbackQuery):
 # =========================================================
 # ⭐ review логика остаётся как есть
 # =========================================================
+
+
 
 
 

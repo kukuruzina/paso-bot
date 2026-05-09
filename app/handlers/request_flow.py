@@ -157,12 +157,22 @@ def kb_confirm():
     return b.as_markup()
 
 
-def match_keyboard(offer_id: int):
+def match_keyboard(offer_id: int, user):
     b = InlineKeyboardBuilder()
+
+    if user.is_admin:
+        btn_text = "🔓 Открыть контакт"
+    else:
+        btn_text = (
+            f"🔓 Открыть контакт • "
+            f"останется: {max((user.contacts_left or 0) - 1, 0)}"
+        )
+
     b.button(
-        text="🔓 Открыть контакт (−1)",
+        text=btn_text,
         callback_data=f"match:contact:{offer_id}"
     )
+
     return b.as_markup()
 
 
@@ -399,6 +409,17 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
     date_from, date_to = request_to_range(time_type)
 
     # 🔥 4. СОЗДАЁМ REQUEST
+
+    if not cq.from_user.username:
+
+        await cq.message.answer(
+            "⚠️ Для использования PASO нужен username в Telegram.\n\n"
+            "Откройте:\n"
+            "Telegram → Настройки → Имя пользователя"
+        )
+
+        return
+
     req = Request(
         user_id=user.id,
         from_country="any",
@@ -454,7 +475,7 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
         await cq.message.answer(
             badge + format_offer_text(off, off_user),
-            reply_markup=match_keyboard(m.id),
+            reply_markup=match_keyboard(m.id, user),
         )
 
 
@@ -481,7 +502,7 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
             await cq.bot.send_message(
                 off_user.tg_user_id,
                 format_request_text(req, user, off.transport_type),
-                reply_markup=match_keyboard(m.id),
+                reply_markup=match_keyboard(m.id, user),
             )
 
             # ✅ флаг
@@ -497,13 +518,6 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
     # 🔥 сохраняем изменения
     await session.commit()
-
-
-
-
-
-
-
 
 
 

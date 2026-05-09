@@ -16,13 +16,6 @@ from ..config import load_config
 router = Router()
 
 
-def kb_join_group():
-    b = InlineKeyboardBuilder()
-    b.button(text="🚪 Войти в группу", callback_data="go:join_group")
-    b.adjust(1)
-    return b.as_markup()
-
-
 def _fmt_date(dt) -> str:
     try:
         return dt.date().isoformat()
@@ -125,14 +118,11 @@ async def render_profile(
         f"📊 Сделки: {deals_total}\n"
         f"• заказчик: {deals_customer}\n"
         f"• перевозчик: {deals_carrier}\n\n"
-        f"💎 Ценные: {valuable} (макс: {max_value_text})\n\n"
+        f"📬 Контактов для связи: {user.contacts_left or 0}\n\n"
         f"{sub_text}"
     )
 
-    if sub_active:
-        await answer(text, reply_markup=kb_join_group())
-    else:
-        await answer(text)
+    await answer(text)
 
 
 # =========================
@@ -183,4 +173,9 @@ async def join_group_cb(cq: CallbackQuery, session: AsyncSession):
 
     await cq.message.answer(f"🚪 Вход:\n{link}")
     await cq.answer()
+
+
+
+
+
 

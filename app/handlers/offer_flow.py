@@ -88,9 +88,22 @@ def format_request_text(req: Request, user: User | None, transport_type: str):
     )
 
 
-def match_keyboard(match_id: int):
+def match_keyboard(match_id: int, user):
     b = InlineKeyboardBuilder()
-    b.button(text="🔓 Открыть контакт (−1)", callback_data=f"match:contact:{match_id}")
+
+    if user.is_admin:
+        btn_text = "🔓 Открыть контакт"
+    else:
+        btn_text = (
+            f"🔓 Открыть контакт • "
+            f"останется: {max((user.contacts_left or 0) - 1, 0)}"
+        )
+
+    b.button(
+        text=btn_text,
+        callback_data=f"match:contact:{match_id}"
+    )
+
     return b.as_markup()
 
 
@@ -320,6 +333,17 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
         )
 
     # 🔥 3. СОЗДАЁМ OFFER
+
+    if not cq.from_user.username:
+
+        await cq.message.answer(
+            "⚠️ Для использования PASO нужен username в Telegram.\n\n"
+            "Откройте:\n"
+            "Telegram → Настройки → Имя пользователя"
+        )
+
+        return
+
     offer = Offer(
         user_id=user.id,
         from_country="any",
@@ -358,6 +382,10 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     await cq.message.answer(f"🔥 Найдено {len(matches)} заявок:\n")
 
+    user = await session.scalar(
+        select(User).where(User.tg_user_id == cq.from_user.id)
+    )
+
 # 📦 ПОКАЗ ПЕРЕВОЗЧИКУ
     for i, m in enumerate(matches):
 
@@ -373,7 +401,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
         await cq.message.answer(
             format_request_text(req, req_user, offer.transport_type),
-            reply_markup=match_keyboard(m.id),
+            reply_markup=match_keyboard(m.id, user),
         )
 
 
@@ -407,7 +435,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
             await cq.bot.send_message(
                 req_user.tg_user_id,
                 format_offer_text(offer, off_user),
-                reply_markup=match_keyboard(m.id),
+                reply_markup=match_keyboard(m.id, user),
             )
 
             # ✅ ставим флаг только после успеха
@@ -423,8 +451,6 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     # 🔥 сохраняем изменения
     await session.commit()
-
-
 
 
 

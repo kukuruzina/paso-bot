@@ -19,6 +19,7 @@ router = Router()
 
 async def upsert_user(session: AsyncSession, msg: Message):
     tg = msg.from_user
+
     if not tg:
         return None
 
@@ -26,16 +27,30 @@ async def upsert_user(session: AsyncSession, msg: Message):
     user = (await session.execute(q)).scalar_one_or_none()
 
     if not user:
+
         user = User(
             tg_user_id=tg.id,
             tg_username=tg.username,
             first_name=tg.first_name,
             last_name=tg.last_name,
             language_code=tg.language_code,
+            contacts_left=5,
         )
+
         session.add(user)
+
         await session.commit()
         await session.refresh(user)
+
+    else:
+
+        # 🔄 обновляем username и данные
+        user.tg_username = tg.username
+        user.first_name = tg.first_name
+        user.last_name = tg.last_name
+        user.language_code = tg.language_code
+
+        await session.commit()
 
     return user
 
@@ -73,7 +88,7 @@ async def start(m: Message, session: AsyncSession, command: CommandObject):
         "🚀 Добро пожаловать в PASO\n\n"
         "📦 Отправляйте товары через путешественников\n"
         "💸 Или подрабатывайте на доставке\n\n"
-        "👇 Выбери действие:",
+        "👇 Выберите действие:",
         reply_markup=kb_main(is_admin=user.is_admin),
     )
 
@@ -89,7 +104,7 @@ async def show_subscribe(cq: CallbackQuery):
     await cq.message.answer(
         "💳 Подписка\n\n"
         "🔓 Открывает контакты\n\n"
-        "• Single — 1 контакт (€2)\n"
+        "• Single — 5 контактов (€2)\n"
         "• Standard — 14 дней (€5.55)\n"
         "• Pro — 30 дней (€9)\n\n"
         "👉 Используй /subscribe для оплаты"
@@ -127,6 +142,5 @@ async def referral_menu(cq: CallbackQuery, session: AsyncSession):
     )
 
     await cq.message.answer(text)
-
 
 

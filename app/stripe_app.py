@@ -70,7 +70,7 @@ async def activate_subscription_for_tg_user(tg_user_id: int, plan: str):
 
         # 🟡 SINGLE → 1 контакт
         if plan == "single":
-            user.contacts_left = (user.contacts_left or 0) + 1
+            user.contacts_left = (user.contacts_left or 0) + 5
             await session.commit()
             print(f"[PAYMENT] ✅ +1 contact for user {tg_user_id}")
             return
@@ -268,5 +268,6 @@ async def success():
 @app.get("/stripe/cancel")
 async def cancel():
     return {"ok": True}
+
 
 

@@ -28,7 +28,7 @@ async def render_subscription(message: Message):
     await message.answer(
         "💳 Подписка PASO\n\n"
         "Выберите тариф:\n\n"
-        "🥉 Single — €2 (1 контакт)\n"
+        "🥉 Single — €2 (5 контактов)\n"
         "🥈 Standard — €5.55 (14 дней доступа)\n"
         "🥇 Pro — €9 (30 дней доступа)\n"
         "💎 Premium — €14.5 (30 дней + приоритет)\n",
@@ -44,7 +44,7 @@ async def select_plan(callback: CallbackQuery):
     plan = callback.data.split(":")[1]
 
     plan_titles = {
-        "single": "🥉 Single — €2 (1 контакт)",
+        "single": "🥉 Single — €2 (5 контактов)",
         "standard": "🥈 Standard — €5.55 (14 дней доступа)",
         "pro": "🥇 Pro — €9 (30 дней доступа)",
         "premium": "💎 Premium — €14.5 (30 дней + приоритет)",
@@ -162,6 +162,7 @@ async def subscribe_cmd(message: Message):
 @router.message(F.text.in_(["💳 Подписка", "Подписка"]))
 async def subscribe_menu(message: Message):
     await render_subscription(message)
+
 
 
 

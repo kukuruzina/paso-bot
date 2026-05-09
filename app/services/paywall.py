@@ -2,18 +2,25 @@ from sqlalchemy import select
 from datetime import datetime
 
 from app.models import Subscription
+from app.config import load_config
+
+cfg = load_config()
 
 
 async def can_access_contacts(session, user) -> bool:
-    # админ
+
+    # ADMIN BYPASS
     if user.is_admin:
         return True
 
-    # single (контакты)
+    if user.tg_user_id in cfg.admin_tg_ids:
+        return True
+
+    # SINGLE CONTACTS
     if (user.contacts_left or 0) > 0:
         return True
 
-    # активная подписка
+    # ACTIVE SUBSCRIPTION
     res = await session.execute(
         select(Subscription)
         .where(
@@ -33,9 +40,15 @@ async def can_access_contacts(session, user) -> bool:
 
 
 async def spend_contact(session, user):
+
+    # ADMIN BYPASS
     if user.is_admin:
         return
 
+    if user.tg_user_id in cfg.admin_tg_ids:
+        return
+
+    # SPEND SINGLE CONTACT
     if (user.contacts_left or 0) > 0:
         user.contacts_left -= 1
         await session.commit()
