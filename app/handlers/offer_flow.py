@@ -3,7 +3,11 @@ from datetime import date, datetime, timedelta
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    Message,
+    ReplyKeyboardRemove,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,6 +16,7 @@ from app.models import User, Offer, Request
 from app.enums import WeightBand, CarryType, RowStatus
 from app.matching import find_matches_for_offer
 from app.utils import norm
+from app.keyboards import kb_popular_cities
 from app.handlers.request_flow import format_offer_text
 
 router = Router()
@@ -166,15 +171,74 @@ async def calendar_back(cq: CallbackQuery):
 
 @router.callback_query(F.data == "go:off")
 async def start_offer(cq: CallbackQuery, state: FSMContext):
+
     await state.clear()
     await state.set_state(OfferFSM.from_city)
 
-    await cq.message.answer("✈️ 1/6 Откуда выезжаете?")
+    await cq.message.answer(
+        "🧳 Взять посылку\n\n"
+        "1/6 Откуда выезжаете? Выберите из популярных направлений или введите свое: ",
+        reply_markup=kb_popular_cities(),
+    )
+
     await cq.answer()
 
 
+# =========================================================
+# INLINE POPULAR CITIES
+# =========================================================
+
+@router.callback_query(
+    OfferFSM.from_city,
+    F.data.startswith("city:")
+)
+async def select_from_city(
+    cq: CallbackQuery,
+    state: FSMContext
+):
+
+    city = cq.data.split(":")[1]
+
+    await state.update_data(from_city=city)
+    await state.set_state(OfferFSM.to_city)
+
+    await cq.message.answer(
+        "2/6 Куда едете? Выберите из популярных направлений или введите свое:",
+        reply_markup=kb_popular_cities(exclude=city),
+    )
+
+    await cq.answer()
+
+
+@router.callback_query(
+    OfferFSM.to_city,
+    F.data.startswith("city:")
+)
+async def select_to_city(
+    cq: CallbackQuery,
+    state: FSMContext
+):
+
+    city = cq.data.split(":")[1]
+
+    await state.update_data(to_city=city)
+    await state.set_state(OfferFSM.trip_date)
+
+    await cq.message.answer(
+        "3/6 Когда поездка?",
+        reply_markup=kb_calendar_current_week(),
+    )
+
+    await cq.answer()
+
+
+# =========================================================
+# MANUAL INPUT
+# =========================================================
+
 @router.message(OfferFSM.from_city)
 async def step_from_city(m: Message, state: FSMContext):
+
     city = norm(m.text)
 
     if not city or len(city) < 3:
@@ -183,11 +247,15 @@ async def step_from_city(m: Message, state: FSMContext):
     await state.update_data(from_city=city)
     await state.set_state(OfferFSM.to_city)
 
-    await m.answer("2/6 Куда едете?")
+    await m.answer(
+        "2/6 Куда едете?",
+        reply_markup=kb_popular_cities(exclude=city),
+    )
 
 
 @router.message(OfferFSM.to_city)
 async def step_to_city(m: Message, state: FSMContext):
+
     city = norm(m.text)
 
     if not city or len(city) < 3:
@@ -196,24 +264,35 @@ async def step_to_city(m: Message, state: FSMContext):
     await state.update_data(to_city=city)
     await state.set_state(OfferFSM.trip_date)
 
-    await m.answer("3/6 Когда поездка?", reply_markup=kb_calendar_current_week())
+    await m.answer(
+        "3/6 Когда поездка?",
+        reply_markup=kb_calendar_current_week(),
+    )
 
 
 @router.callback_query(F.data.startswith("o_date:"))
 async def step_date(cq: CallbackQuery, state: FSMContext):
+
     await cq.answer()
 
     val = cq.data.split(":")[1]
     today = date.today()
 
-    d = today + timedelta(days=30) if val == "month" else date.fromisoformat(val)
+    d = (
+        today + timedelta(days=30)
+        if val == "month"
+        else date.fromisoformat(val)
+    )
 
     await state.update_data(trip_date=d.isoformat())
 
-    # 🔥 сначала транспорт
+    # транспорт
     await state.set_state(OfferFSM.transport_type)
-    await cq.message.answer("4/6 Как передвигаетесь?", reply_markup=kb_transport())
 
+    await cq.message.answer(
+        "4/6 Как передвигаетесь?",
+        reply_markup=kb_transport(),
+    )
 
 def kb_transport():
     b = InlineKeyboardBuilder()
@@ -451,6 +530,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     # 🔥 сохраняем изменения
     await session.commit()
+
 
 
 

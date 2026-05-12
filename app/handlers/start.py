@@ -10,7 +10,7 @@ from sqlalchemy import select
 from ..models import User
 from ..keyboards import kb_main
 
-from .subscription_flow import subscribe
+from .subscription_flow import render_subscription
 
 router = Router()
 
@@ -69,7 +69,8 @@ async def start(
 ):
     user = await upsert_user(session, m)
 
-# =========================================================
+
+    # =========================================================
     # REFERRAL
     # =========================================================
 
@@ -122,26 +123,26 @@ async def start(
         return
 
 # =========================================================
-# MAIN START MESSAGE
-# =========================================================
+    # MAIN START MESSAGE
+    # =========================================================
 
-await m.answer(
-    "🚀 Добро пожаловать в PASO бот\n\n"
+    await m.answer(
+        "🚀 Добро пожаловать в PASО бот\n\n"
 
-    "📦 Отправляйте товары через путешественников\n"
-    "💸 Или подрабатывайте на доставке\n\n"
+        "📦 Отправляйте товары через путешественников\n"
+        "💸 Или подрабатывайте на доставке\n\n"
 
-    "1️⃣ Создайте заявку или поездку\n"
-    "2️⃣ Получите подходящие совпадения\n"
-    "3️⃣ Откройте контакт и договоритесь напрямую\n\n"
+        "1️⃣ Создайте заявку или поездку\n"
+        "2️⃣ Получите подходящие совпадения\n"
+        "3️⃣ Откройте контакт и договоритесь напрямую\n\n"
 
-    "🎁 Новым пользователям +5 контактов бесплатно\n"
-    "👥 1 приглашённый друг +1 контакт\n\n"
+        "🎁 Новым пользователям +5 контактов бесплатно\n"
+        "👥 1 приглашённый друг +1 контакт\n\n"
 
-    "👇 Выберите действие:",
+        "👇 Выберите действие:",
 
-    reply_markup=kb_main(is_admin=user.is_admin),
-)
+        reply_markup=kb_main(is_admin=user.is_admin),
+    )
 
 
 # =========================================================
@@ -153,9 +154,7 @@ async def show_subscribe(cq: CallbackQuery):
 
     await cq.answer()
 
-    cq.message.text = "/subscribe"
-
-    await subscribe(cq.message)
+    await render_subscription(cq.message)
 
 
 # =========================================================
@@ -184,7 +183,5 @@ async def referral_menu(cq: CallbackQuery, session: AsyncSession):
         f"{ref_link}"
     )
     await cq.message.answer(text)
-
-
 
 

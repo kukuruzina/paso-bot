@@ -5,7 +5,11 @@ from datetime import date, datetime, timedelta
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    Message,
+    ReplyKeyboardRemove,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -13,6 +17,7 @@ from sqlalchemy import select
 from app.enums import Category, WeightBand, CarryType, RowStatus
 from app.models import User, Request, Offer
 from app.utils import norm
+from ..keyboards import kb_popular_cities
 
 router = Router()
 
@@ -262,15 +267,74 @@ def format_request_text(req: Request, user: User | None, transport_type: str | N
 
 @router.callback_query(F.data == "go:req")
 async def start_request(cq: CallbackQuery, state: FSMContext):
+
     await state.clear()
     await state.set_state(RequestFSM.from_city)
 
-    await cq.message.answer("📦 Отправить посылку\n\n1/6 Откуда?")
+    await cq.message.answer(
+        "📦 Отправить посылку\n\n"
+        "1/6 Откуда? Выберите из популярных направлений или введите свое:",
+        reply_markup=kb_popular_cities(),
+    )
+
     await cq.answer()
 
 
+# =========================================================
+# INLINE POPULAR CITIES
+# =========================================================
+
+@router.callback_query(
+    RequestFSM.from_city,
+    F.data.startswith("city:")
+)
+async def select_from_city(
+    cq: CallbackQuery,
+    state: FSMContext
+):
+
+    city = cq.data.split(":")[1]
+
+    await state.update_data(from_city=city)
+    await state.set_state(RequestFSM.to_city)
+
+    await cq.message.answer(
+        "2/6 Куда? Выберите из популярных направлений или введите свое:",
+        reply_markup=kb_popular_cities(exclude=city),
+    )
+
+    await cq.answer()
+
+
+@router.callback_query(
+    RequestFSM.to_city,
+    F.data.startswith("city:")
+)
+async def select_to_city(
+    cq: CallbackQuery,
+    state: FSMContext
+):
+
+    city = cq.data.split(":")[1]
+
+    await state.update_data(to_city=city)
+    await state.set_state(RequestFSM.category)
+
+    await cq.message.answer(
+        "3/6 Категория:",
+        reply_markup=kb_category(),
+    )
+
+    await cq.answer()
+
+
+# =========================================================
+# MANUAL INPUT
+# =========================================================
+
 @router.message(RequestFSM.from_city)
 async def step_from_city(m: Message, state: FSMContext):
+
     city = norm(m.text)
 
     if not city or len(city) < 3:
@@ -279,11 +343,15 @@ async def step_from_city(m: Message, state: FSMContext):
     await state.update_data(from_city=city)
     await state.set_state(RequestFSM.to_city)
 
-    await m.answer("2/6 Куда?")
+    await m.answer(
+        "2/6 Куда?",
+        reply_markup=kb_popular_cities(exclude=city),
+    )
 
 
 @router.message(RequestFSM.to_city)
 async def step_to_city(m: Message, state: FSMContext):
+
     city = norm(m.text)
 
     if not city or len(city) < 3:
@@ -292,11 +360,15 @@ async def step_to_city(m: Message, state: FSMContext):
     await state.update_data(to_city=city)
     await state.set_state(RequestFSM.category)
 
-    await m.answer("3/6 Категория:", reply_markup=kb_category())
+    await m.answer(
+        "3/6 Категория:",
+        reply_markup=kb_category(),
+    )
 
 
 @router.callback_query(F.data.startswith("cat:"))
 async def step_category(cq: CallbackQuery, state: FSMContext):
+
     mp = {
         "1": Category.clothes,
         "2": Category.cosmetics,
@@ -305,11 +377,17 @@ async def step_category(cq: CallbackQuery, state: FSMContext):
         "5": Category.other,
     }
 
-    await state.update_data(category=mp[cq.data.split(":")[1]].value)
+    await state.update_data(
+        category=mp[cq.data.split(":")[1]].value
+    )
 
-    # 🔥 теперь сначала транспорт
     await state.set_state(RequestFSM.transport_type)
-    await cq.message.answer("4/6 Какой транспорт?", reply_markup=kb_transport())
+
+    await cq.message.answer(
+        "4/6 Какой транспорт?",
+        reply_markup=kb_transport(),
+    )
+
     await cq.answer()
 
 
@@ -517,7 +595,7 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
 
     # 🔥 сохраняем изменения
-    await session.commit()
+        await session.commit()
 
 
 

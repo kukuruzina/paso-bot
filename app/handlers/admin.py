@@ -92,17 +92,25 @@ async def admin_stats_callback(
         select(func.count(Match.id))
     )).scalar() or 0
 
-    today = datetime.utcnow() - timedelta(days=1)
-    week = datetime.utcnow() - timedelta(days=7)
+    # =========================
+    # NEW USERS
+    # =========================
 
     new_today = (await session.execute(
         select(func.count(User.id))
-        .where(User.created_at >= today)
+        .where(
+            func.date(User.created_at)
+            == func.current_date()
+        )
     )).scalar() or 0
 
     new_week = (await session.execute(
         select(func.count(User.id))
-        .where(User.created_at >= week)
+        .where(
+            User.created_at >= (
+                func.current_date() - timedelta(days=7)
+            )
+        )
     )).scalar() or 0
 
     await cq.message.answer(

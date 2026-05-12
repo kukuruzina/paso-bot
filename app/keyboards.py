@@ -1,5 +1,40 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
+
+# =========================================================
+# POPULAR CITIES INLINE
+# =========================================================
+
+POPULAR_CITIES = [
+    "Прага",
+    "Стамбул",
+    "Анталья",
+    "Тбилиси",
+    "Москва",
+    "Алматы",
+]
+
+
+def kb_popular_cities(exclude: str | None = None):
+
+    kb = InlineKeyboardBuilder()
+
+    for city in POPULAR_CITIES:
+
+        if exclude and city == exclude:
+            continue
+
+        kb.button(
+            text=city,
+            callback_data=f"city:{city}"
+        )
+
+    kb.adjust(2)
+
+    return kb.as_markup()
 
 
 # =========================================================
@@ -143,4 +178,9 @@ def kb_fail_reasons(match_id: int):
             )
         ],
     ])
+
+
+
+
+
 

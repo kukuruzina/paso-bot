@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Request, Offer, Match, User
 from app.enums import CarryType, RowStatus
 from app.utils import norm
+from app.geo import city_in_country
 
 
 # ================= WEIGHT =================
@@ -188,8 +189,27 @@ async def find_matches_for_offer(
         print("DATES:", off.trip_date, req.delivery_date_from, req.delivery_date_to)
         print("CARRY:", req.carry_type, off.baggage_type)
 
-        # маршрут
-        if not (city_match(req.from_city, off.from_city) and city_match(req.to_city, off.to_city)):
+        # маршрут / страна
+
+        req_from = norm(req.from_city)
+        off_from = norm(off.from_city)
+
+        req_to = norm(req.to_city)
+        off_to = norm(off.to_city)
+
+        from_ok = (
+            city_match(req_from, off_from)
+            or city_in_country(off_from, req_from)
+            or city_in_country(req_from, off_from)
+        )
+
+        to_ok = (
+            city_match(req_to, off_to)
+            or city_in_country(off_to, req_to)
+            or city_in_country(req_to, off_to)
+        )
+
+        if not from_ok or not to_ok:
             continue
 
         # даты
@@ -262,8 +282,27 @@ async def find_matches_for_request(
         print("DATES:", off.trip_date, req.delivery_date_from, req.delivery_date_to)
         print("CARRY:", req.carry_type, off.baggage_type)
 
-        # маршрут
-        if not (city_match(req.from_city, off.from_city) and city_match(req.to_city, off.to_city)):
+        # маршрут / страна
+
+        req_from = norm(req.from_city)
+        off_from = norm(off.from_city)
+
+        req_to = norm(req.to_city)
+        off_to = norm(off.to_city)
+
+        from_ok = (
+            city_match(req_from, off_from)
+            or city_in_country(off_from, req_from)
+            or city_in_country(req_from, off_from)
+        )
+
+        to_ok = (
+            city_match(req_to, off_to)
+            or city_in_country(off_to, req_to)
+            or city_in_country(req_to, off_to)
+        )
+
+        if not from_ok or not to_ok:
             print("❌ skip: city mismatch")
             continue
 
@@ -348,7 +387,3 @@ async def find_matches_for_request(
     print("MATCHING REQUEST DONE:", len(created))
 
     return created
-
-
-
-
