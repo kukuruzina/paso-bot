@@ -3,7 +3,12 @@ from __future__ import annotations
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.filters.command import CommandObject
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    ReplyKeyboardRemove,
+)
+from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -64,11 +69,20 @@ async def upsert_user(session: AsyncSession, msg: Message):
 @router.message(CommandStart())
 async def start(
     m: Message,
+    state: FSMContext,
     session: AsyncSession,
     command: CommandObject
 ):
-    user = await upsert_user(session, m)
+    # 🔥 сброс любого FSM
+    await state.clear()
 
+    # 🔥 убрать старые клавиатуры
+    await m.answer(
+        "⌨️",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    user = await upsert_user(session, m)
 
     # =========================================================
     # REFERRAL
@@ -82,7 +96,6 @@ async def start(
         try:
             inviter_id = int(command.args.split("_")[1])
 
-            # нельзя пригласить самого себя
             if inviter_id != user.id:
 
                 inviter = await session.get(User, inviter_id)
@@ -115,19 +128,21 @@ async def start(
     # =========================================================
 
     if command.args and command.args.strip().lower() == "paid":
+
         await m.answer(
             "✅ Подписка активна!\n\n"
             "Давайте создадим заявку 👇",
             reply_markup=kb_main(is_admin=user.is_admin),
         )
+
         return
 
-# =========================================================
+    # =========================================================
     # MAIN START MESSAGE
     # =========================================================
 
     await m.answer(
-        "🚀 Добро пожаловать в PASО бот\n\n"
+        "🚀 Добро пожаловать в PASO бот\n\n"
 
         "📦 Отправляйте товары через путешественников\n"
         "💸 Или подрабатывайте на доставке\n\n"

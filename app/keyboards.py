@@ -18,7 +18,7 @@ POPULAR_CITIES = [
 ]
 
 
-def kb_popular_cities(exclude: str | None = None):
+def kb_popular_cities_INLINE(exclude: str | None = None):
 
     kb = InlineKeyboardBuilder()
 
@@ -178,9 +178,5 @@ def kb_fail_reasons(match_id: int):
             )
         ],
     ])
-
-
-
-
 
 

@@ -16,7 +16,7 @@ from app.models import User, Offer, Request
 from app.enums import WeightBand, CarryType, RowStatus
 from app.matching import find_matches_for_offer
 from app.utils import norm
-from app.keyboards import kb_popular_cities
+from app.keyboards import kb_popular_cities_INLINE
 from app.handlers.request_flow import format_offer_text
 
 router = Router()
@@ -178,7 +178,7 @@ async def start_offer(cq: CallbackQuery, state: FSMContext):
     await cq.message.answer(
         "🧳 Взять посылку\n\n"
         "1/6 Откуда выезжаете? Выберите из популярных направлений или введите свое: ",
-        reply_markup=kb_popular_cities(),
+        reply_markup=kb_popular_cities_INLINE(),
     )
 
     await cq.answer()
@@ -204,7 +204,7 @@ async def select_from_city(
 
     await cq.message.answer(
         "2/6 Куда едете? Выберите из популярных направлений или введите свое:",
-        reply_markup=kb_popular_cities(exclude=city),
+        reply_markup=kb_popular_cities_INLINE(exclude=city),
     )
 
     await cq.answer()
@@ -249,7 +249,7 @@ async def step_from_city(m: Message, state: FSMContext):
 
     await m.answer(
         "2/6 Куда едете?",
-        reply_markup=kb_popular_cities(exclude=city),
+        reply_markup=kb_popular_cities_INLINE(exclude=city),
     )
 
 
@@ -530,6 +530,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     # 🔥 сохраняем изменения
     await session.commit()
+
 
 
 

@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.enums import Category, WeightBand, CarryType, RowStatus
 from app.models import User, Request, Offer
 from app.utils import norm
-from ..keyboards import kb_popular_cities
+from ..keyboards import kb_popular_cities_INLINE
 
 router = Router()
 
@@ -274,7 +274,7 @@ async def start_request(cq: CallbackQuery, state: FSMContext):
     await cq.message.answer(
         "📦 Отправить посылку\n\n"
         "1/6 Откуда? Выберите из популярных направлений или введите свое:",
-        reply_markup=kb_popular_cities(),
+        reply_markup=kb_popular_cities_INLINE(),
     )
 
     await cq.answer()
@@ -300,7 +300,7 @@ async def select_from_city(
 
     await cq.message.answer(
         "2/6 Куда? Выберите из популярных направлений или введите свое:",
-        reply_markup=kb_popular_cities(exclude=city),
+        reply_markup=kb_popular_cities_INLINE(exclude=city),
     )
 
     await cq.answer()
@@ -345,7 +345,7 @@ async def step_from_city(m: Message, state: FSMContext):
 
     await m.answer(
         "2/6 Куда?",
-        reply_markup=kb_popular_cities(exclude=city),
+        reply_markup=kb_popular_cities_INLINE(exclude=city),
     )
 
 
@@ -596,6 +596,7 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
     # 🔥 сохраняем изменения
         await session.commit()
+
 
 
 

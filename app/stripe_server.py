@@ -35,45 +35,79 @@ stripe.api_key = STRIPE_SECRET_KEY
 
 class CheckoutRequest(BaseModel):
     tg_user_id: int
+    plan: str
 
 
 # ========================
 # STRIPE
 # ========================
 
+STRIPE_PRICES = {
+    "single": os.getenv("STRIPE_PRICE_SINGLE"),
+    "standard": os.getenv("STRIPE_PRICE_STANDARD"),
+    "pro": os.getenv("STRIPE_PRICE_PRO"),
+    "premium": os.getenv("STRIPE_PRICE_PREMIUM"),
+}
+
+
 @app.post("/stripe/create_checkout")
 async def stripe_create_checkout(data: CheckoutRequest):
 
     tg_user_id = data.tg_user_id
+    plan = data.plan
+
+    SUBSCRIPTION_PLANS = ["pro", "premium"]
+
+    mode = (
+        "subscription"
+        if plan in SUBSCRIPTION_PLANS
+        else "payment"
+    )
 
     try:
+
+        if plan not in STRIPE_PRICES:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid plan"
+            )
+
+        price_id = STRIPE_PRICES[plan]
+
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
-            mode="payment",
+
+            mode=mode,
+
             line_items=[
                 {
-                    "price_data": {
-                        "currency": "eur",
-                        "product_data": {
-                            "name": "PASO subscription (30 days)",
-                        },
-                        "unit_amount": 500,
-                    },
+                    "price": price_id,
                     "quantity": 1,
                 }
             ],
+
             success_url=f"{PUBLIC_BASE_URL}/stripe/success",
             cancel_url=f"{PUBLIC_BASE_URL}/stripe/cancel",
+
             metadata={
-                "tg_user_id": str(tg_user_id)
+                "tg_user_id": str(tg_user_id),
+                "plan": plan,
             }
         )
 
         return {"url": session.url}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
+        print("STRIPE ERROR:", e)
+
+        import traceback
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 # ========================
 # YOOKASSA
@@ -184,4 +218,5 @@ async def stripe_webhook(request: Request):
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
