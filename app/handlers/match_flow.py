@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
@@ -237,45 +241,145 @@ async def open_contact(cq: CallbackQuery, session: AsyncSession):
 
 
 # =========================================================
-# 🔥 3️⃣ РЕЗУЛЬТАТ СДЕЛКИ (НОВОЕ)
+# 🔥 3️⃣ РЕЗУЛЬТАТ СДЕЛКИ
 # =========================================================
 
 @router.callback_query(F.data.startswith("deal:ok:"))
-async def deal_ok(cq: CallbackQuery):
+async def deal_ok(
+    cq: CallbackQuery,
+    session: AsyncSession
+):
     match_id = int(cq.data.split(":")[-1])
 
+    match = await session.get(Match, match_id)
+
+    if not match:
+        return await cq.answer(
+            "Сделка не найдена",
+            show_alert=True
+        )
+
+    # текущий пользователь
+    result = await session.execute(
+        select(User).where(
+            User.tg_user_id == cq.from_user.id
+        )
+    )
+
+    user = result.scalar_one()
+
+    # кто подтвердил сделку
+    if user.id == match.request.user_id:
+        match.requester_result = "success"
+    else:
+        match.carrier_result = "success"
+
+    await session.commit()
+
+    # если подтвердили оба
+    if (
+        match.requester_result == "success"
+        and
+        match.carrier_result == "success"
+    ):
+
+        match.status = "completed"
+
+        await session.commit()
+
+        await cq.message.answer(
+            "🎉 Сделка подтверждена обеими сторонами!"
+        )
+
+        # отправляем оценку ОБОИМ
+        for tg_id in [
+            match.request.user.tg_user_id,
+            match.offer.user.tg_user_id
+        ]:
+
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=f"{i}⭐",
+                            callback_data=f"review:{match.id}:{i}"
+                        )
+                    ]
+                    for i in range(1, 6)
+                ]
+            )
+
+            await cq.bot.send_message(
+                tg_id,
+                "⭐ Оцените пользователя",
+                reply_markup=kb
+            )
+
+        return await cq.answer()
+
     await cq.message.answer(
-        "🎉 Отлично!\n\nСпасибо, что воспользовались PASO 🙌\n\n"
-        "Не забудьте оставить отзыв!"
+        "⏳ Ждём подтверждение второго участника"
     )
 
     await cq.answer()
 
 
 @router.callback_query(F.data.startswith("deal:fail:"))
-async def deal_fail(cq: CallbackQuery):
+async def deal_fail(
+    cq: CallbackQuery,
+    session: AsyncSession
+):
     match_id = int(cq.data.split(":")[-1])
+
+    match = await session.get(Match, match_id)
+
+    if not match:
+        return await cq.answer(
+            "Сделка не найдена",
+            show_alert=True
+        )
+
+    match.status = "cancelled"
+
+    await session.commit()
 
     await cq.message.answer(
         "Понятно 👌\n\nЧто пошло не так?",
         reply_markup=kb_fail_reasons(match_id)
     )
 
+    # уведомляем второго участника
+    other_tg_id = (
+        match.offer.user.tg_user_id
+        if cq.from_user.id == match.request.user.tg_user_id
+        else match.request.user.tg_user_id
+    )
+
+    await cq.bot.send_message(
+        other_tg_id,
+        "❌ Второй участник отметил сделку как несостоявшуюся"
+    )
+
     await cq.answer()
 
 
 # =========================================================
-# 🔥 4️⃣ ПРИЧИНЫ (НОВОЕ)
+# 🔥 4️⃣ ПРИЧИНЫ
 # =========================================================
 
 @router.callback_query(F.data.startswith("fail:"))
 async def fail_reason(cq: CallbackQuery):
+
     reason = cq.data.split(":")[1]
 
-    await cq.message.answer("Спасибо за ответ 🙌")
+    await cq.message.answer(
+        "Спасибо за ответ 🙌"
+    )
 
-    # 👉 позже можно сохранять в БД
-    # print("FAIL REASON:", reason)
+    # TODO:
+    # позже можно сохранять причину в БД
+
+    print("FAIL REASON:", reason)
 
     await cq.answer()
 
@@ -283,6 +387,7 @@ async def fail_reason(cq: CallbackQuery):
 # =========================================================
 # ⭐ review логика остаётся как есть
 # =========================================================
+
 
 
 

@@ -10,6 +10,8 @@ from sqlalchemy import select
 from ..models import User
 from ..keyboards import kb_main
 
+from .subscription_flow import subscribe
+
 router = Router()
 
 
@@ -60,22 +62,57 @@ async def upsert_user(session: AsyncSession, msg: Message):
 # =========================================================
 
 @router.message(CommandStart())
-async def start(m: Message, session: AsyncSession, command: CommandObject):
+async def start(
+    m: Message,
+    session: AsyncSession,
+    command: CommandObject
+):
     user = await upsert_user(session, m)
 
-    # 🔥 REFERRAL (ОЧЕНЬ ВАЖНО)
-    if command.args and command.args.startswith("ref_"):
+# =========================================================
+    # REFERRAL
+    # =========================================================
+
+    if (
+        command.args
+        and command.args.startswith("ref_")
+        and not user.invited_by
+    ):
         try:
             inviter_id = int(command.args.split("_")[1])
 
-            if inviter_id != user.id and not user.invited_by:
-                user.invited_by = inviter_id
-                await session.commit()
+            # нельзя пригласить самого себя
+            if inviter_id != user.id:
 
-        except Exception:
-            pass
+                inviter = await session.get(User, inviter_id)
 
-    # 👉 Если пользователь пришёл после оплаты
+                if inviter:
+
+                    user.invited_by = inviter.id
+
+                    inviter.invites_count = (
+                        inviter.invites_count or 0
+                    ) + 1
+
+                    inviter.contacts_left = (
+                        inviter.contacts_left or 0
+                    ) + 1
+
+                    await session.commit()
+
+                    print(
+                        f"REFERRAL OK: "
+                        f"{inviter.first_name} invited "
+                        f"{user.first_name}"
+                    )
+
+        except Exception as e:
+            print("REFERRAL ERROR:", e)
+
+    # =========================================================
+    # AFTER PAYMENT
+    # =========================================================
+
     if command.args and command.args.strip().lower() == "paid":
         await m.answer(
             "✅ Подписка активна!\n\n"
@@ -84,13 +121,27 @@ async def start(m: Message, session: AsyncSession, command: CommandObject):
         )
         return
 
-    await m.answer(
-        "🚀 Добро пожаловать в PASO\n\n"
-        "📦 Отправляйте товары через путешественников\n"
-        "💸 Или подрабатывайте на доставке\n\n"
-        "👇 Выберите действие:",
-        reply_markup=kb_main(is_admin=user.is_admin),
-    )
+# =========================================================
+# MAIN START MESSAGE
+# =========================================================
+
+await m.answer(
+    "🚀 Добро пожаловать в PASO бот\n\n"
+
+    "📦 Отправляйте товары через путешественников\n"
+    "💸 Или подрабатывайте на доставке\n\n"
+
+    "1️⃣ Создайте заявку или поездку\n"
+    "2️⃣ Получите подходящие совпадения\n"
+    "3️⃣ Откройте контакт и договоритесь напрямую\n\n"
+
+    "🎁 Новым пользователям +5 контактов бесплатно\n"
+    "👥 1 приглашённый друг +1 контакт\n\n"
+
+    "👇 Выберите действие:",
+
+    reply_markup=kb_main(is_admin=user.is_admin),
+)
 
 
 # =========================================================
@@ -99,16 +150,12 @@ async def start(m: Message, session: AsyncSession, command: CommandObject):
 
 @router.callback_query(F.data == "go:subscribe")
 async def show_subscribe(cq: CallbackQuery):
+
     await cq.answer()
 
-    await cq.message.answer(
-        "💳 Подписка\n\n"
-        "🔓 Открывает контакты\n\n"
-        "• Single — 5 контактов (€2)\n"
-        "• Standard — 14 дней (€5.55)\n"
-        "• Pro — 30 дней (€9)\n\n"
-        "👉 Используй /subscribe для оплаты"
-    )
+    cq.message.text = "/subscribe"
+
+    await subscribe(cq.message)
 
 
 # =========================================================
@@ -126,21 +173,18 @@ async def referral_menu(cq: CallbackQuery, session: AsyncSession):
     ref_link = f"https://t.me/{bot_username}?start=ref_{user.id}"
 
     text = (
-        "🎁 Приглашай друзей — получай контакты\n\n"
+        "🎁 Приглашайте друзей и получайте контакты\n\n"
+
         "💸 Бонусы:\n"
-        "• 1 друг → 1 контакт\n\n"
+        "• 1 друг → +1 контакт\n\n"
 
-        "🥈 10 друзей → 14 дней доступа\n"
-        "👉 экономия €5.55\n\n"
+        f"👥 Вы пригласили: {user.invites_count or 0}\n"
 
-        "🥇 20 друзей → 30 дней доступа\n"
-        "👉 экономия €9 🔥\n\n"
-
-        f"👥 Ты пригласил: {user.invites_count}\n\n"
-        "🔗 Твоя ссылка:\n"
+        "🔗 Ваша ссылка:\n\n"
         f"{ref_link}"
     )
-
     await cq.message.answer(text)
+
+
 
 

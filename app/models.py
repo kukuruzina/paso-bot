@@ -207,26 +207,54 @@ class Offer(Base):
 class Match(Base):
     __tablename__ = "matches"
 
-    __table_args__ = (
+    table_args = (
         UniqueConstraint("request_id", "offer_id", name="uq_request_offer"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    request_id: Mapped[int] = mapped_column(ForeignKey("requests.id", ondelete="CASCADE"))
-    offer_id: Mapped[int] = mapped_column(ForeignKey("offers.id", ondelete="CASCADE"))
+    request_id: Mapped[int] = mapped_column(
+        ForeignKey("requests.id", ondelete="CASCADE")
+    )
+
+    offer_id: Mapped[int] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE")
+    )
 
     score: Mapped[int] = mapped_column(Integer, default=0)
 
-    status: Mapped[str] = mapped_column(String(16), default="proposed", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default="proposed",
+        nullable=False
+    )
+
+    # результат сделки от заказчика
+    requester_result: Mapped[str | None] = mapped_column(
+        String(16),
+        nullable=True
+    )
+
+    # результат сделки от перевозчика
+    carrier_result: Mapped[str | None] = mapped_column(
+        String(16),
+        nullable=True
+    )
 
     notified: Mapped[bool] = mapped_column(default=False)
 
     notified_requester: Mapped[bool] = mapped_column(default=False)
     notified_carrier: Mapped[bool] = mapped_column(default=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True
+    )
 
     request: Mapped[Request] = relationship()
     offer: Mapped[Offer] = relationship()
@@ -273,6 +301,8 @@ class Review(Base):
     had_docs: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 
 
 

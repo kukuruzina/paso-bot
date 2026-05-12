@@ -73,40 +73,61 @@ async def select_plan(callback: CallbackQuery):
 # =========================
 # STRIPE ОПЛАТА
 # =========================
+
 @router.callback_query(F.data.startswith("pay_stripe:"))
 async def pay_stripe(callback: CallbackQuery):
+
     plan = callback.data.split(":")[1]
     cfg = load_config()
 
     try:
+
         async with httpx.AsyncClient() as client:
+
             r = await client.post(
-                f"{cfg.public_base_url}/stripe/create_checkout",
+                "http://127.0.0.1:8000/stripe/create_checkout",
                 json={
                     "tg_user_id": callback.from_user.id,
                     "plan": plan
                 },
-                timeout=10,
+                timeout=20,
             )
 
+        print("STRIPE STATUS:", r.status_code)
+        print("STRIPE RESPONSE:", r.text)
+
         if r.status_code != 200:
-            raise Exception("Stripe error")
+            raise Exception(f"Stripe status {r.status_code}")
 
         data = r.json()
+
         url = data.get("url")
 
         if not url:
             raise Exception("No checkout url")
 
-    except Exception:
-        await callback.message.answer("Ошибка оплаты 😢")
+    except Exception as e:
+
+        print("STRIPE ERROR:", e)
+
+        await callback.message.answer(
+            f"Ошибка Stripe 😢\n\n{e}"
+        )
+
         return
 
     await callback.message.answer(
         "💳 Перейдите к оплате:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Оплатить", url=url)]
-        ])
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Оплатить",
+                        url=url
+                    )
+                ]
+            ]
+        )
     )
 
 
@@ -162,6 +183,8 @@ async def subscribe_cmd(message: Message):
 @router.message(F.text.in_(["💳 Подписка", "Подписка"]))
 async def subscribe_menu(message: Message):
     await render_subscription(message)
+
+
 
 
 
