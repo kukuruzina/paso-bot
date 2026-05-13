@@ -36,6 +36,8 @@ class OfferFSM(StatesGroup):
     from_city = State()
     to_city = State()
     trip_date = State()
+    return_trip = State()
+    return_trip_date = State()
     transport_type = State()
     capacity_band = State()
     baggage_type = State()
@@ -177,7 +179,7 @@ async def start_offer(cq: CallbackQuery, state: FSMContext):
 
     await cq.message.answer(
         "🧳 Взять посылку\n\n"
-        "1/6 Откуда выезжаете? Выберите из популярных направлений или введите свое: ",
+        "1/7 Откуда выезжаете? Выберите из популярных направлений или введите свое: ",
         reply_markup=kb_popular_cities_INLINE(),
     )
 
@@ -203,7 +205,7 @@ async def select_from_city(
     await state.set_state(OfferFSM.to_city)
 
     await cq.message.answer(
-        "2/6 Куда едете? Выберите из популярных направлений или введите свое:",
+        "2/7 Куда едете? Выберите из популярных направлений или введите свое:",
         reply_markup=kb_popular_cities_INLINE(exclude=city),
     )
 
@@ -225,7 +227,7 @@ async def select_to_city(
     await state.set_state(OfferFSM.trip_date)
 
     await cq.message.answer(
-        "3/6 Когда поездка?",
+        "3/7 Когда поездка?",
         reply_markup=kb_calendar_current_week(),
     )
 
@@ -248,7 +250,7 @@ async def step_from_city(m: Message, state: FSMContext):
     await state.set_state(OfferFSM.to_city)
 
     await m.answer(
-        "2/6 Куда едете?",
+        "2/7 Куда едете?",
         reply_markup=kb_popular_cities_INLINE(exclude=city),
     )
 
@@ -262,20 +264,25 @@ async def step_to_city(m: Message, state: FSMContext):
         return await m.answer("Введите корректный город")
 
     await state.update_data(to_city=city)
+
     await state.set_state(OfferFSM.trip_date)
 
     await m.answer(
-        "3/6 Когда поездка?",
+        "3/7 Когда поездка?",
         reply_markup=kb_calendar_current_week(),
     )
 
 
-@router.callback_query(F.data.startswith("o_date:"))
+@router.callback_query(
+    OfferFSM.trip_date,
+    F.data.startswith("o_date:")
+)
 async def step_date(cq: CallbackQuery, state: FSMContext):
 
     await cq.answer()
 
     val = cq.data.split(":")[1]
+
     today = date.today()
 
     d = (
@@ -284,48 +291,169 @@ async def step_date(cq: CallbackQuery, state: FSMContext):
         else date.fromisoformat(val)
     )
 
-    await state.update_data(trip_date=d.isoformat())
+    await state.update_data(
+        trip_date=d.isoformat()
+    )
 
-    # транспорт
-    await state.set_state(OfferFSM.transport_type)
+    # 🔥 транспорт
+    await state.set_state(
+        OfferFSM.transport_type
+    )
 
     await cq.message.answer(
-        "4/6 Как передвигаетесь?",
+        "4/7 Как передвигаетесь?",
         reply_markup=kb_transport(),
     )
 
+
 def kb_transport():
     b = InlineKeyboardBuilder()
-    b.button(text="✈️ Самолет", callback_data="o_t:plane")
-    b.button(text="🚗 Машина", callback_data="o_t:car")
+
+    b.button(
+        text="✈️ Самолет",
+        callback_data="o_t:plane"
+    )
+
+    b.button(
+        text="🚗 Машина",
+        callback_data="o_t:car"
+    )
+
     b.adjust(1)
+
+    return b.as_markup()
+
+
+def kb_return_trip():
+    b = InlineKeyboardBuilder()
+
+    b.button(
+        text="🔁 Да",
+        callback_data="return:yes"
+    )
+
+    b.button(
+        text="❌ Нет",
+        callback_data="return:no"
+    )
+
+    b.adjust(2)
+
     return b.as_markup()
 
 
 @router.callback_query(F.data.startswith("o_t:"))
 async def step_transport(cq: CallbackQuery, state: FSMContext):
+
     await cq.answer()
 
     val = cq.data.split(":")[1]
-    await state.update_data(transport_type=val)
 
-    # 🔥 потом вес (возможности)
-    await state.set_state(OfferFSM.capacity_band)
-    await cq.message.answer("5/6 Сколько сможете взять?", reply_markup=kb_weight())
+    await state.update_data(
+        transport_type=val
+    )
+
+    # 🔥 спрашиваем про обратную поездку
+    await state.set_state(
+        OfferFSM.return_trip
+    )
+
+    await cq.message.answer(
+        "5/7 Будет обратная поездка?",
+        reply_markup=kb_return_trip(),
+    )
+
+
+@router.callback_query(F.data.startswith("return:"))
+async def step_return_trip(
+    cq: CallbackQuery,
+    state: FSMContext
+):
+
+    await cq.answer()
+
+    val = cq.data.split(":")[1]
+
+    # ❌ без обратной поездки
+    if val == "no":
+
+        await state.update_data(
+            return_trip_date=None
+        )
+
+        await state.set_state(
+            OfferFSM.capacity_band
+        )
+
+        await cq.message.answer(
+            "6/7 Сколько сможете взять?",
+            reply_markup=kb_weight(),
+        )
+
+        return
+
+    # 🔁 есть обратная поездка
+    await state.set_state(
+        OfferFSM.return_trip_date
+    )
+
+    await cq.message.answer(
+        "5/7 Когда обратная поездка?",
+        reply_markup=kb_calendar_current_week(),
+    )
+
+
+@router.callback_query(
+    OfferFSM.return_trip_date,
+    F.data.startswith("o_date:")
+)
+async def step_return_trip_date(
+    cq: CallbackQuery,
+    state: FSMContext
+):
+
+    await cq.answer()
+
+    val = cq.data.split(":")[1]
+
+    today = date.today()
+
+    d = (
+        today + timedelta(days=30)
+        if val == "month"
+        else date.fromisoformat(val)
+    )
+
+    await state.update_data(
+        return_trip_date=d.isoformat()
+    )
+
+    await state.set_state(
+        OfferFSM.capacity_band
+    )
+
+    await cq.message.answer(
+        "6/7 Сколько сможете взять?",
+        reply_markup=kb_weight(),
+    )
 
 
 def kb_weight():
     b = InlineKeyboardBuilder()
+
     b.button(text="до 1 кг", callback_data="o_w:1")
     b.button(text="1–3 кг", callback_data="o_w:2")
     b.button(text="3–5 кг", callback_data="o_w:3")
     b.button(text="5+ кг", callback_data="o_w:4")
+
     b.adjust(2)
+
     return b.as_markup()
 
 
 @router.callback_query(F.data.startswith("o_w:"))
 async def step_weight(cq: CallbackQuery, state: FSMContext):
+
     await cq.answer()
 
     mp = {
@@ -335,23 +463,42 @@ async def step_weight(cq: CallbackQuery, state: FSMContext):
         "4": WeightBand.gt5,
     }
 
-    await state.update_data(capacity_band=mp[cq.data.split(":")[1]])
+    await state.update_data(
+        capacity_band=mp[cq.data.split(":")[1]]
+    )
 
     # 🔥 потом багаж
-    await state.set_state(OfferFSM.baggage_type)
-    await cq.message.answer("6/6 В чем сможете взять?", reply_markup=kb_carry_offer())
+    await state.set_state(
+        OfferFSM.baggage_type
+    )
+
+    await cq.message.answer(
+        "7/7 В чем сможете взять?",
+        reply_markup=kb_carry_offer(),
+    )
 
 
 def kb_carry_offer():
     b = InlineKeyboardBuilder()
-    b.button(text="🎒 Только ручная кладь", callback_data="o_c:1")
-    b.button(text="🧳 Есть багаж", callback_data="o_c:2")
+
+    b.button(
+        text="🎒 Только ручная кладь",
+        callback_data="o_c:1"
+    )
+
+    b.button(
+        text="🧳 Есть багаж",
+        callback_data="o_c:2"
+    )
+
     b.adjust(1)
+
     return b.as_markup()
 
 
 @router.callback_query(F.data.startswith("o_c:"))
 async def step_carry(cq: CallbackQuery, state: FSMContext):
+
     await cq.answer()
 
     mp = {
@@ -359,17 +506,31 @@ async def step_carry(cq: CallbackQuery, state: FSMContext):
         "2": "luggage",
     }
 
-    await state.update_data(baggage_type=mp[cq.data.split(":")[1]])
+    await state.update_data(
+        baggage_type=mp[cq.data.split(":")[1]]
+    )
 
-    # 🔥 ВАЖНО: финальное состояние
-    await state.set_state(OfferFSM.confirm)
+    # 🔥 финальное состояние
+    await state.set_state(
+        OfferFSM.confirm
+    )
 
     await cq.message.answer(RULES_TEXT)
-    await cq.message.answer("👇", reply_markup=kb_confirm())
+
+    await cq.message.answer(
+        "👇",
+        reply_markup=kb_confirm()
+    )
+
 
 def kb_confirm():
     b = InlineKeyboardBuilder()
-    b.button(text="✅ Подтвердить", callback_data="off:confirm")
+
+    b.button(
+        text="✅ Подтвердить",
+        callback_data="off:confirm"
+    )
+
     return b.as_markup()
 
 
@@ -530,9 +691,6 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     # 🔥 сохраняем изменения
     await session.commit()
-
-
-
 
 
 

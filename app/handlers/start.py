@@ -84,6 +84,11 @@ async def start(
 
     user = await upsert_user(session, m)
 
+    # 🔥 источник пользователя
+    if command.args and not user.source:
+        user.source = command.args
+        await session.commit()
+
     # =========================================================
     # REFERRAL
     # =========================================================
@@ -198,5 +203,6 @@ async def referral_menu(cq: CallbackQuery, session: AsyncSession):
         f"{ref_link}"
     )
     await cq.message.answer(text)
+
 
 

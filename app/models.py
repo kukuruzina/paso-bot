@@ -51,6 +51,8 @@ class User(Base):
     valuable_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cash_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     docs_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    source: Mapped[str | None] = mapped_column(nullable=True)
 
     # 🔥 PAYWALL
     contacts_left: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -180,6 +182,8 @@ class Offer(Base):
     to_city: Mapped[str | None] = mapped_column(String(64))
 
     trip_date: Mapped[date] = mapped_column(Date, nullable=False)
+    
+    return_trip_date: Mapped[date | None] = mapped_column(nullable=True)
 
     transit_country: Mapped[str | None] = mapped_column(String(64))
     transit_city: Mapped[str | None] = mapped_column(String(64))
@@ -301,6 +305,8 @@ class Review(Base):
     had_docs: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 
 
 

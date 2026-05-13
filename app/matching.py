@@ -189,7 +189,9 @@ async def find_matches_for_offer(
         print("DATES:", off.trip_date, req.delivery_date_from, req.delivery_date_to)
         print("CARRY:", req.carry_type, off.baggage_type)
 
-        # маршрут / страна
+# =====================================================
+        # DIRECT ROUTE
+        # =====================================================
 
         req_from = norm(req.from_city)
         off_from = norm(off.from_city)
@@ -209,25 +211,94 @@ async def find_matches_for_offer(
             or city_in_country(req_to, off_to)
         )
 
-        if not from_ok or not to_ok:
+        is_direct = from_ok and to_ok
+
+
+        # =====================================================
+        # REVERSE ROUTE
+        # =====================================================
+
+        reverse_from_ok = (
+            city_match(req_from, off_to)
+            or city_in_country(off_to, req_from)
+            or city_in_country(req_from, off_to)
+        )
+
+        reverse_to_ok = (
+            city_match(req_to, off_from)
+            or city_in_country(off_from, req_to)
+            or city_in_country(req_to, off_from)
+        )
+
+        reverse_date_ok = (
+            off.return_trip_date
+            and req.delivery_date_from
+            and req.delivery_date_to
+            and req.delivery_date_from
+                <= off.return_trip_date
+                <= req.delivery_date_to
+        )
+
+        is_reverse = (
+            reverse_from_ok
+            and reverse_to_ok
+            and reverse_date_ok
+        )
+
+
+        # =====================================================
+        # SKIP
+        # =====================================================
+
+        if not is_direct and not is_reverse:
             continue
 
-        # даты
-        if req.delivery_date_from and off.trip_date < req.delivery_date_from:
+
+        # =====================================================
+        # DATE CHECK
+        # =====================================================
+
+        if is_direct:
+
+            if (
+                req.delivery_date_from
+                and off.trip_date < req.delivery_date_from
+            ):
+                continue
+
+            if (
+                req.delivery_date_to
+                and off.trip_date > req.delivery_date_to
+            ):
+                continue
+
+
+        # =====================================================
+        # CARRY
+        # =====================================================
+
+        if not baggage_compatible(
+            req.carry_type,
+            off.baggage_type
+        ):
             continue
 
-        if req.delivery_date_to and off.trip_date > req.delivery_date_to:
-            continue
 
-        # carry
-        if not baggage_compatible(req.carry_type, off.baggage_type):
-            continue
+        # =====================================================
+        # TRANSPORT
+        # =====================================================
 
-        # transport
-        if not transport_compatible(req.transport_type, off.transport_type):
-            print("❌ transport mismatch:", req.transport_type, off.transport_type)
+        if not transport_compatible(
+            req.transport_type,
+            off.transport_type
+        ):
+            print(
+                "❌ transport mismatch:",
+                req.transport_type,
+                off.transport_type
+            )
             continue
-
+        
         score = calc_score(req, off, offer_user)
         candidates.append((req, score))
 
@@ -387,3 +458,4 @@ async def find_matches_for_request(
     print("MATCHING REQUEST DONE:", len(created))
 
     return created
+
