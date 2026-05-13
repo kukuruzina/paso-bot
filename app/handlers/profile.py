@@ -128,8 +128,18 @@ async def render_profile(
 # =========================
 # COMMAND
 # =========================
-@router.message(Command("profile"))
-async def profile_cmd(message: Message, session: AsyncSession):
+@router.message(
+    Command("profile"),
+    flags={"state": "*"}
+)
+async def profile_cmd(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession
+):
+
+    await state.clear()
+
     await render_profile(
         tg_user_id=message.from_user.id,
         answer=message.answer,
@@ -140,13 +150,23 @@ async def profile_cmd(message: Message, session: AsyncSession):
 # =========================
 # CALLBACK
 # =========================
+
 @router.callback_query(F.data == "go:profile")
-async def profile_cb(cq: CallbackQuery, session: AsyncSession):
+async def profile_cb(
+    cq: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession
+):
+
+    # 🔥 сброс FSM
+    await state.clear()
+
     await render_profile(
         tg_user_id=cq.from_user.id,
         answer=cq.message.answer,
         session=session,
     )
+
     await cq.answer()
 
 
@@ -173,6 +193,9 @@ async def join_group_cb(cq: CallbackQuery, session: AsyncSession):
 
     await cq.message.answer(f"🚪 Вход:\n{link}")
     await cq.answer()
+
+
+
 
 
 

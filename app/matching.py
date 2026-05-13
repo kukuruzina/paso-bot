@@ -325,6 +325,7 @@ async def find_matches_for_offer(
 # =========================================================
 
 async def find_matches_for_request(
+    bot,
     session: AsyncSession,
     request_id: int,
     window_days: int,
@@ -457,5 +458,48 @@ async def find_matches_for_request(
 
     print("MATCHING REQUEST DONE:", len(created))
 
+    # =====================================================
+    # PUSH NOTIFICATIONS
+    # =====================================================
+
+    for match in created:
+
+        try:
+
+            off = await session.get(
+                Offer,
+                match.offer_id
+            )
+
+            carrier = await session.get(
+                User,
+                off.user_id
+            )
+
+            await bot.send_message(
+                req.user_id,
+
+                "🎯 Найден перевозчик!\n\n"
+
+                f"✈️ {off.from_city} → {off.to_city}\n"
+                f"📅 {off.trip_date.strftime('%d.%m')}\n\n"
+
+                "👇 Откройте PASO чтобы посмотреть"
+            )
+
+            print(
+                "✅ PUSH SENT:",
+                req.user_id
+            )
+
+        except Exception as e:
+
+            print(
+                "❌ PUSH ERROR:",
+                e
+            )
+
     return created
+
+
 

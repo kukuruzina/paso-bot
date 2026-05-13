@@ -333,7 +333,14 @@ async def select_to_city(
 # =========================================================
 
 @router.message(RequestFSM.from_city)
-async def step_from_city(m: Message, state: FSMContext):
+async def step_from_city(
+    m: Message,
+    state: FSMContext
+):
+
+    if m.text and m.text.startswith("/"):
+        await state.clear()
+        return
 
     city = norm(m.text)
 
@@ -350,7 +357,14 @@ async def step_from_city(m: Message, state: FSMContext):
 
 
 @router.message(RequestFSM.to_city)
-async def step_to_city(m: Message, state: FSMContext):
+async def step_to_city(
+        m: Message,
+        state: FSMContext
+):
+
+    if m.text and m.text.startswith("/"):
+        await state.clear()
+        return
 
     city = norm(m.text)
 
@@ -367,7 +381,10 @@ async def step_to_city(m: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("cat:"))
-async def step_category(cq: CallbackQuery, state: FSMContext):
+async def step_category(
+    cq: CallbackQuery,
+    state: FSMContext
+):
 
     mp = {
         "1": Category.clothes,
@@ -392,7 +409,11 @@ async def step_category(cq: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("t2:"))
-async def step_transport(cq: CallbackQuery, state: FSMContext):
+async def step_transport(
+        cq: CallbackQuery,
+        state: FSMContext
+):
+
     await state.update_data(transport_type=cq.data.split(":")[1])
 
     # 🔥 потом вес
@@ -403,6 +424,9 @@ async def step_transport(cq: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("w:"))
 async def step_weight(cq: CallbackQuery, state: FSMContext):
+
+    await cq.answer()
+
     mp = {
         "1": WeightBand.lt1,
         "2": WeightBand.w1_3,
@@ -420,6 +444,9 @@ async def step_weight(cq: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("c:"))
 async def step_carry(cq: CallbackQuery, state: FSMContext):
+    
+    await cq.answer()
+
     mp = {
         "1": "hand",
         "2": "luggage",
@@ -596,6 +623,7 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
     # 🔥 сохраняем изменения
         await session.commit()
+
 
 
 

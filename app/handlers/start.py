@@ -66,7 +66,10 @@ async def upsert_user(session: AsyncSession, msg: Message):
 # START
 # =========================================================
 
-@router.message(CommandStart())
+@router.message(
+    CommandStart(),
+    flags={"state": "*"}
+)
 async def start(
     m: Message,
     state: FSMContext,
@@ -203,6 +206,7 @@ async def referral_menu(cq: CallbackQuery, session: AsyncSession):
         f"{ref_link}"
     )
     await cq.message.answer(text)
+
 
 
 

@@ -238,8 +238,14 @@ async def select_to_city(
 # MANUAL INPUT
 # =========================================================
 
-@router.message(OfferFSM.from_city)
+@router.message(
+    OfferFSM.from_city,
+    ~F.text.startswith("/")
+)
 async def step_from_city(m: Message, state: FSMContext):
+
+    if m.text.startswith("/"):
+        return
 
     city = norm(m.text)
 
@@ -247,6 +253,7 @@ async def step_from_city(m: Message, state: FSMContext):
         return await m.answer("Введите корректный город")
 
     await state.update_data(from_city=city)
+
     await state.set_state(OfferFSM.to_city)
 
     await m.answer(
@@ -255,8 +262,14 @@ async def step_from_city(m: Message, state: FSMContext):
     )
 
 
-@router.message(OfferFSM.to_city)
+@router.message(
+    OfferFSM.to_city,
+    ~F.text.startswith("/")
+)
 async def step_to_city(m: Message, state: FSMContext):
+
+    if m.text.startswith("/"):
+        return
 
     city = norm(m.text)
 
@@ -691,6 +704,8 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     # 🔥 сохраняем изменения
     await session.commit()
+
+
 
 
 
