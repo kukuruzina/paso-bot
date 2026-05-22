@@ -89,8 +89,8 @@ async def render_profile(
     # СДЕЛКИ (старт для админа)
     # =========================
     if user.is_admin:
-        deals_customer = 1
-        deals_carrier = 3
+        deals_customer = getattr(user, "deals_as_customer", 0) or 0
+        deals_carrier = getattr(user, "deals_as_carrier", 0) or 0
     else:
         deals_customer = getattr(user, "deals_as_customer", 0) or 0
         deals_carrier = getattr(user, "deals_as_carrier", 0) or 0
@@ -193,6 +193,8 @@ async def join_group_cb(cq: CallbackQuery, session: AsyncSession):
 
     await cq.message.answer(f"🚪 Вход:\n{link}")
     await cq.answer()
+
+
 
 
 

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import timedelta
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Request, Offer, Match, User
-from app.enums import CarryType, RowStatus
+from app.enums import RowStatus
 from app.utils import norm
 from app.geo import city_in_country
 
 
-# ================= WEIGHT =================
+# =====================================================
+# WEIGHT
+# =====================================================
 
 WEIGHT_RANK = {
     "lt1": 1,
@@ -30,72 +33,108 @@ def weight_covers(offer_band, req_band) -> bool:
     offer_band = normalize_enum(offer_band)
     req_band = normalize_enum(req_band)
 
-    return WEIGHT_RANK.get(offer_band, 0) >= WEIGHT_RANK.get(req_band, 0)
+    return WEIGHT_RANK.get(
+        offer_band,
+        0
+    ) >= WEIGHT_RANK.get(
+        req_band,
+        0
+    )
 
 
-# ================= CARRY =================
+# =====================================================
+# CARRY
+# =====================================================
 
 def baggage_compatible(req_carry, off_baggage) -> bool:
+
     req = normalize_enum(req_carry)
     off = normalize_enum(off_baggage)
 
-    # 👌 без разницы
+    # любой вариант
     if req == "any":
         return True
 
-    # 🎒 можно / нужно в ручной → подходит всё
+    # ручная кладь
     if req == "hand":
         return True
 
-    # 🧳 нужен багаж → только если он есть
+    # нужен багаж
     if req == "luggage":
         return off == "luggage"
 
     return False
 
-# ================= TRANSPORT =================
+
+# =====================================================
+# TRANSPORT
+# =====================================================
 
 def transport_compatible(req_transport, off_transport) -> bool:
+
     req = normalize_enum(req_transport)
     off = normalize_enum(off_transport)
 
-    # 👌 любой транспорт подходит
     if req == "any" or off == "any":
         return True
 
-    # строгий матч
     return req == off
 
-# ================= CITY =================
+
+# =====================================================
+# CITY
+# =====================================================
 
 def city_match(a: str | None, b: str | None) -> bool:
+
     if not a or not b:
         return False
+
     return norm(a) == norm(b)
 
 
-# ================= SCORE =================
+# =====================================================
+# SCORE
+# =====================================================
 
-def calc_score(req: Request, off: Offer, offer_user: User | None) -> int:
+def calc_score(
+    req: Request,
+    off: Offer,
+    offer_user: User | None
+) -> int:
+
     score = 50
 
     # даты
     if req.delivery_date_to:
-        delta = (req.delivery_date_to - off.trip_date).days
+
+        delta = (
+            req.delivery_date_to
+            - off.trip_date
+        ).days
+
         if delta >= 0:
+
             if delta == 0:
                 score += 25
+
             elif delta <= 3:
                 score += 15
+
             elif delta <= 7:
                 score += 10
 
     # вес
-    if weight_covers(off.capacity_band, req.weight_band):
+    if weight_covers(
+        off.capacity_band,
+        req.weight_band
+    ):
         score += 10
 
-    # transport бонус
-    off_transport = normalize_enum(getattr(off, "transport_type", "any"))
+    # transport bonus
+    off_transport = normalize_enum(
+        getattr(off, "transport_type", "any")
+    )
 
     if off_transport == "any":
         score += 1
@@ -103,25 +142,40 @@ def calc_score(req: Request, off: Offer, offer_user: User | None) -> int:
         score += 3
 
     # рейтинг
-    if offer_user and offer_user.rating_count:
-        score += int(offer_user.rating_avg * 2)
+    if (
+        offer_user
+        and offer_user.rating_count
+    ):
+        score += int(
+            offer_user.rating_avg * 2
+        )
 
-    # премиум
-    if offer_user and getattr(offer_user, "is_premium_carrier", False):
+    # premium
+    if (
+        offer_user
+        and getattr(
+            offer_user,
+            "is_premium_carrier",
+            False
+        )
+    ):
         score += 15
 
     return score
 
 
-# =========================================================
-# 🔧 ОБЩИЙ МЕТОД СОЗДАНИЯ MATCH (safe)
-# =========================================================
+# =====================================================
+# SAFE CREATE MATCH
+# =====================================================
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+async def create_match_if_not_exists(
+    session,
+    req: Request,
+    off: Offer,
+    score: int,
+    match_level: str,
+):
 
-async def create_match_if_not_exists(session, req: Request, off: Offer, score: int):
-    # 🔍 проверяем существование
     existing = await session.execute(
         select(Match).where(
             Match.request_id == req.id,
@@ -136,28 +190,29 @@ async def create_match_if_not_exists(session, req: Request, off: Offer, score: i
         request_id=req.id,
         offer_id=off.id,
         score=score,
+        level=match_level,
         status="proposed",
 
-        notified=False,              # 🔥 ДОБАВИТЬ
-        notified_requester=False,    # (на всякий случай)
-        notified_carrier=False,      # (на всякий случай)
+        notified=False,
+        notified_requester=False,
+        notified_carrier=False,
     )
 
     session.add(m)
 
     try:
-        # 🔥 ключевой момент — ловим гонку
+
         await session.flush()
         return m
 
     except IntegrityError:
-        # 💣 если параллельно создался такой же match
+
         return None
 
 
-# =========================================================
-# ✈️ OFFER → REQUESTS (ОСТАВИЛ КАК ЕСТЬ)
-# =========================================================
+# =====================================================
+# OFFER → REQUESTS
+# =====================================================
 
 async def find_matches_for_offer(
     session: AsyncSession,
@@ -165,196 +220,38 @@ async def find_matches_for_offer(
     window_days: int,
     top_n: int,
 ):
+
     print("🔥 MATCHING OFFER STARTED", offer_id)
 
-    off = await session.get(Offer, offer_id)
+    off = await session.get(
+        Offer,
+        offer_id
+    )
+
     if not off:
         print("❌ Offer not found")
         return []
 
-    offer_user = await session.get(User, off.user_id)
+    offer_user = await session.get(
+        User,
+        off.user_id
+    )
 
-    q = select(Request).where(Request.status == RowStatus.active)
-    requests = (await session.execute(q)).scalars().all()
+    q = select(Request).where(
+        Request.status == RowStatus.active
+    )
 
-    print("Found requests:", len(requests))
+    requests = (
+        await session.execute(q)
+    ).scalars().all()
 
     candidates = []
 
     for req in requests:
 
-        print("---- CHECK ----")
-        print("REQ:", req.id, req.from_city, req.to_city, req.transport_type)
-        print("OFF:", off.id, off.from_city, off.to_city, off.transport_type)
-        print("DATES:", off.trip_date, req.delivery_date_from, req.delivery_date_to)
-        print("CARRY:", req.carry_type, off.baggage_type)
-
-# =====================================================
-        # DIRECT ROUTE
-        # =====================================================
-
-        req_from = norm(req.from_city)
-        off_from = norm(off.from_city)
-
-        req_to = norm(req.to_city)
-        off_to = norm(off.to_city)
-
-        from_ok = (
-            city_match(req_from, off_from)
-            or city_in_country(off_from, req_from)
-            or city_in_country(req_from, off_from)
-        )
-
-        to_ok = (
-            city_match(req_to, off_to)
-            or city_in_country(off_to, req_to)
-            or city_in_country(req_to, off_to)
-        )
-
-        is_direct = from_ok and to_ok
-
-
-        # =====================================================
-        # REVERSE ROUTE
-        # =====================================================
-
-        reverse_from_ok = (
-            city_match(req_from, off_to)
-            or city_in_country(off_to, req_from)
-            or city_in_country(req_from, off_to)
-        )
-
-        reverse_to_ok = (
-            city_match(req_to, off_from)
-            or city_in_country(off_from, req_to)
-            or city_in_country(req_to, off_from)
-        )
-
-        reverse_date_ok = (
-            off.return_trip_date
-            and req.delivery_date_from
-            and req.delivery_date_to
-            and req.delivery_date_from
-                <= off.return_trip_date
-                <= req.delivery_date_to
-        )
-
-        is_reverse = (
-            reverse_from_ok
-            and reverse_to_ok
-            and reverse_date_ok
-        )
-
-
-        # =====================================================
-        # SKIP
-        # =====================================================
-
-        if not is_direct and not is_reverse:
+        # ❌ self-match
+        if req.user_id == off.user_id:
             continue
-
-
-        # =====================================================
-        # DATE CHECK
-        # =====================================================
-
-        if is_direct:
-
-            if (
-                req.delivery_date_from
-                and off.trip_date < req.delivery_date_from
-            ):
-                continue
-
-            if (
-                req.delivery_date_to
-                and off.trip_date > req.delivery_date_to
-            ):
-                continue
-
-
-        # =====================================================
-        # CARRY
-        # =====================================================
-
-        if not baggage_compatible(
-            req.carry_type,
-            off.baggage_type
-        ):
-            continue
-
-
-        # =====================================================
-        # TRANSPORT
-        # =====================================================
-
-        if not transport_compatible(
-            req.transport_type,
-            off.transport_type
-        ):
-            print(
-                "❌ transport mismatch:",
-                req.transport_type,
-                off.transport_type
-            )
-            continue
-        
-        score = calc_score(req, off, offer_user)
-        candidates.append((req, score))
-
-    candidates.sort(key=lambda x: x[1], reverse=True)
-
-    if top_n:
-        candidates = candidates[:top_n]
-
-    created = []
-
-    for req, score in candidates:
-        m = await create_match_if_not_exists(session, req, off, score)
-        if m:
-            created.append(m)
-
-    await session.commit()
-
-    print("MATCHING OFFER DONE:", len(created))
-    return created
-
-
-# =========================================================
-# 📦 REQUEST → OFFERS
-# =========================================================
-
-async def find_matches_for_request(
-    bot,
-    session: AsyncSession,
-    request_id: int,
-    window_days: int,
-    top_n: int,
-):
-
-    print("🔥 MATCHING REQUEST STARTED", request_id)
-
-    req = await session.get(Request, request_id)
-    if not req:
-        print("❌ Request not found")
-        return []
-
-    q = select(Offer).where(Offer.status == RowStatus.active)
-    offers = (await session.execute(q)).scalars().all()
-
-    print("Found offers:", len(offers))
-
-    candidates = []
-
-    for off in offers:
-
-        print("---- CHECK ----")
-        print("REQ:", req.id, req.from_city, req.to_city, req.transport_type)
-        print("OFF:", off.id, off.from_city, off.to_city, off.transport_type)
-        print("DATES:", off.trip_date, req.delivery_date_from, req.delivery_date_to)
-        print("CARRY:", req.carry_type, off.baggage_type)
-
-        # маршрут / страна
 
         req_from = norm(req.from_city)
         off_from = norm(off.from_city)
@@ -375,129 +272,247 @@ async def find_matches_for_request(
         )
 
         if not from_ok or not to_ok:
-            print("❌ skip: city mismatch")
             continue
 
-        # даты (две стороны)
-        if req.delivery_date_from and off.trip_date < req.delivery_date_from:
-            print("❌ skip: too early")
+        match_date = off.trip_date
+
+        # даты
+        if (
+            req.delivery_date_from
+            and match_date < req.delivery_date_from
+        ):
             continue
 
-        if req.delivery_date_to and off.trip_date > req.delivery_date_to:
-            print("❌ skip: too late")
+        if (
+            req.delivery_date_to
+            and match_date > req.delivery_date_to + timedelta(days=5)
+        ):
             continue
 
         # carry
-        if not baggage_compatible(req.carry_type, off.baggage_type):
-            print("❌ skip: carry mismatch")
+        if not baggage_compatible(
+            req.carry_type,
+            off.baggage_type
+        ):
             continue
 
-        # transport (пока мягкий)
-        if not transport_compatible(req.transport_type, off.transport_type):
-            print("❌ skip: transport mismatch", req.transport_type, off.transport_type)
-            continue
+        # transport
+        transport_ok = transport_compatible(
+            req.transport_type,
+            off.transport_type
+        )
 
-        offer_user = await session.get(User, off.user_id)
+        # level
+        delta_days = abs(
+            (
+                match_date
+                - req.delivery_date_to
+            ).days
+        )
 
-        score = calc_score(req, off, offer_user)
-        candidates.append((off, score))
+        if delta_days <= 3 and transport_ok:
+            match_level = "best"
+        else:
+            match_level = "possible"
 
-        print("✅ MATCH CANDIDATE:", off.id, "score=", score)
+        score = calc_score(
+            req,
+            off,
+            offer_user
+        )
 
-    print("CANDIDATES:", len(candidates))
+        candidates.append(
+            (
+                req,
+                score,
+                match_level
+            )
+        )
 
-    # 🔥 сортировка
-    candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
+    candidates.sort(
+        key=lambda x: x[1],
+        reverse=True
+    )
 
-    # 🔥 топ N
-    if top_n and top_n > 0:
+    if top_n:
         candidates = candidates[:top_n]
 
     created = []
 
-    for off, score in candidates:
+    for req, score, match_level in candidates:
 
-        print("👉 TRY CREATE:", off.id)
-
-        existing = await session.execute(
-            select(Match).where(
-                Match.request_id == req.id,
-                Match.offer_id == off.id,
-            )
+        m = await create_match_if_not_exists(
+            session,
+            req,
+            off,
+            score,
+            match_level
         )
 
-        existing_match = existing.scalar_one_or_none()
-
-        if existing_match:
-            print("⚠️ already exists:", off.id)
-            created.append(existing_match)
-            continue
-
-        m = Match(
-            request_id=req.id,
-            offer_id=off.id,
-            score=score,
-            status="proposed",
-
-            notified=False,              # 🔥 ДОБАВИТЬ
-            notified_requester=False,    # (на всякий случай)
-            notified_carrier=False,      # (на всякий случай)
-        )
-        session.add(m)
-
-        try:
-            await session.flush()
+        if m:
             created.append(m)
-            print("🔥 CREATED MATCH:", off.id)
-
-        except Exception as e:
-            print("❌ ERROR:", e)
-            continue
 
     await session.commit()
 
-    print("MATCHING REQUEST DONE:", len(created))
+    print(
+        "MATCHING OFFER DONE:",
+        len(created)
+    )
 
-    # =====================================================
-    # PUSH NOTIFICATIONS
-    # =====================================================
+    return created
 
-    for match in created:
 
-        try:
+# =====================================================
+# REQUEST → OFFERS
+# =====================================================
 
-            off = await session.get(
-                Offer,
-                match.offer_id
+async def find_matches_for_request(
+    bot,
+    session: AsyncSession,
+    request_id: int,
+    window_days: int,
+    top_n: int,
+):
+
+    print(
+        "🔥 MATCHING REQUEST STARTED",
+        request_id
+    )
+
+    req = await session.get(
+        Request,
+        request_id
+    )
+
+    if not req:
+        print("❌ Request not found")
+        return []
+
+    q = select(Offer).where(
+        Offer.status == RowStatus.active
+    )
+
+    offers = (
+        await session.execute(q)
+    ).scalars().all()
+
+    candidates = []
+
+    for off in offers:
+
+        # ❌ self-match
+        if req.user_id == off.user_id:
+            continue
+
+        req_from = norm(req.from_city)
+        off_from = norm(off.from_city)
+
+        req_to = norm(req.to_city)
+        off_to = norm(off.to_city)
+
+        from_ok = (
+            city_match(req_from, off_from)
+            or city_in_country(off_from, req_from)
+            or city_in_country(req_from, off_from)
+        )
+
+        to_ok = (
+            city_match(req_to, off_to)
+
+        or city_in_country(off_to, req_to)
+            or city_in_country(req_to, off_to)
+        )
+
+        if not from_ok or not to_ok:
+            continue
+
+        # даты
+        if (
+            req.delivery_date_from
+            and off.trip_date < req.delivery_date_from
+        ):
+            continue
+
+        if (
+            req.delivery_date_to
+            and off.trip_date > req.delivery_date_to + timedelta(days=5)
+        ):
+            continue
+
+        # carry
+        if not baggage_compatible(
+            req.carry_type,
+            off.baggage_type
+        ):
+            continue
+
+        # transport
+        transport_ok = transport_compatible(
+            req.transport_type,
+            off.transport_type
+        )
+
+        # level
+        delta_days = abs(
+            (
+                off.trip_date
+                - req.delivery_date_to
+            ).days
+        )
+
+        if delta_days <= 3 and transport_ok:
+            match_level = "best"
+        else:
+            match_level = "possible"
+
+        offer_user = await session.get(
+            User,
+            off.user_id
+        )
+
+        score = calc_score(
+            req,
+            off,
+            offer_user
+        )
+
+        candidates.append(
+            (
+                off,
+                score,
+                match_level
             )
+        )
 
-            carrier = await session.get(
-                User,
-                off.user_id
-            )
+    candidates.sort(
+        key=lambda x: x[1],
+        reverse=True
+    )
 
-            await bot.send_message(
-                req.user_id,
+    if top_n:
+        candidates = candidates[:top_n]
 
-                "🎯 Найден перевозчик!\n\n"
+    created = []
 
-                f"✈️ {off.from_city} → {off.to_city}\n"
-                f"📅 {off.trip_date.strftime('%d.%m')}\n\n"
+    for off, score, match_level in candidates:
 
-                "👇 Откройте PASO чтобы посмотреть"
-            )
+        m = await create_match_if_not_exists(
+            session,
+            req,
+            off,
+            score,
+            match_level
+        )
 
-            print(
-                "✅ PUSH SENT:",
-                req.user_id
-            )
+        if m:
+            created.append(m)
 
-        except Exception as e:
+    await session.commit()
 
-            print(
-                "❌ PUSH ERROR:",
-                e
-            )
+    print(
+        "MATCHING REQUEST DONE:",
+        len(created)
+    )
 
     return created
 

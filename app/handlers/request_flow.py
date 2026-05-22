@@ -51,16 +51,29 @@ async def get_user(session: AsyncSession, tg_user_id: int):
 
 
 def request_to_range(time_type: str):
+
     today = date.today()
 
+    # 🔥 ближайшие дни
     if time_type == "soon":
-        return today, today + timedelta(days=7)
-    elif time_type == "week_1_2":
-        return today + timedelta(days=7), today + timedelta(days=14)
-    elif time_type == "month":
-        return today, today + timedelta(days=30)
+        return (
+            today,
+            today + timedelta(days=7)
+        )
 
-    return today, today + timedelta(days=7)
+    # 📅 1–2 недели
+    elif time_type == "week2":
+        return (
+            today + timedelta(days=7),
+            today + timedelta(days=14)
+        )
+
+    # 🗓 в течение месяца
+    else:
+        return (
+            today,
+            today + timedelta(days=30)
+        )
 
 
 # ================= FORMAT HELPERS (NEW) =================
@@ -513,7 +526,7 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
     time_type = data.get("time_type", "soon")
     date_from, date_to = request_to_range(time_type)
 
-    # 🔥 4. СОЗДАЁМ REQUEST
+# 🔥 4. СОЗДАЁМ REQUEST
 
     if not cq.from_user.username:
 
@@ -524,6 +537,34 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
         )
 
         return
+
+
+    # =====================================================
+    # DUPLICATE CHECK
+    # =====================================================
+
+    existing_exact = await session.execute(
+        select(Request).where(
+            Request.user_id == user.id,
+
+            Request.from_city == data.get("from_city"),
+            Request.to_city == data.get("to_city"),
+
+            Request.weight_band == data.get("weight_band"),
+            Request.carry_type == data.get("carry_type"),
+            Request.transport_type == data.get("transport_type", "any"),
+
+            Request.delivery_date_from == date_from,
+            Request.delivery_date_to == date_to,
+        )
+    )
+
+    if existing_exact.scalar_one_or_none():
+
+        return await cq.message.answer(
+            "⚠️ У вас уже есть такая заявка."
+        )
+
 
     req = Request(
         user_id=user.id,
@@ -545,12 +586,15 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
     )
 
     session.add(req)
+
     await session.commit()
     await session.refresh(req)
 
     await state.clear()
 
+
     # 🔥 5. MATCHING
+
     from app.matching import find_matches_for_request
 
     matches = await find_matches_for_request(
@@ -623,8 +667,6 @@ async def finish_request(cq: CallbackQuery, state: FSMContext, session: AsyncSes
 
     # 🔥 сохраняем изменения
         await session.commit()
-
-
 
 
 

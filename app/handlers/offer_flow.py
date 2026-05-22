@@ -585,7 +585,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
             "❌ Данные потерялись. Пожалуйста создайте поездку заново /start"
         )
 
-    # 🔥 3. СОЗДАЁМ OFFER
+# 🔥 3. СОЗДАЁМ OFFER
 
     if not cq.from_user.username:
 
@@ -596,6 +596,35 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
         )
 
         return
+
+
+    # =====================================================
+    # DUPLICATE CHECK
+    # =====================================================
+
+    existing_exact = await session.execute(
+        select(Offer).where(
+            Offer.user_id == user.id,
+
+            Offer.from_city == data.get("from_city"),
+            Offer.to_city == data.get("to_city"),
+
+            Offer.capacity_band == data.get("capacity_band"),
+            Offer.baggage_type == data.get("baggage_type"),
+            Offer.transport_type == data.get("transport_type", "any"),
+
+            Offer.trip_date == date.fromisoformat(
+                data.get("trip_date")
+            ),
+        )
+    )
+
+    if existing_exact.scalar_one_or_none():
+
+        return await cq.message.answer(
+            "⚠️ У вас уже есть такая поездка."
+        )
+
 
     offer = Offer(
         user_id=user.id,
@@ -614,6 +643,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
     )
 
     session.add(offer)
+
     await session.commit()
     await session.refresh(offer)
 
@@ -704,8 +734,6 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
 
     # 🔥 сохраняем изменения
     await session.commit()
-
-
 
 
 

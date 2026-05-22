@@ -40,8 +40,27 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # ⭐ рейтинг
-    rating_avg: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rating_avg: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0
+    )
+
+    rating_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0
+    )
+
+    deals_as_customer: Mapped[int] = mapped_column(
+        Integer,
+        default=0
+    )
+
+    deals_as_carrier: Mapped[int] = mapped_column(
+        Integer,
+        default=0
+    )
 
     # 👑 PREMIUM перевозчик
     is_premium_carrier: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -227,6 +246,11 @@ class Match(Base):
 
     score: Mapped[int] = mapped_column(Integer, default=0)
 
+    level: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True
+    )
+
     status: Mapped[str] = mapped_column(
         String(16),
         default="proposed",
@@ -305,13 +329,6 @@ class Review(Base):
     had_docs: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-
-
-
-
-
-
 
 
 
