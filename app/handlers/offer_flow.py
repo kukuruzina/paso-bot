@@ -121,18 +121,39 @@ def kb_calendar_current_week():
     today = date.today()
 
     days_until_sunday = 6 - today.weekday()
+    current_week = [
+        today + timedelta(days=i)
+        for i in range(days_until_sunday + 1)
+    ]
 
-    for i in range(days_until_sunday + 1):
-        d = today + timedelta(days=i)
+    days_to_monday = (7 - today.weekday()) % 7 or 7
+    next_monday = today + timedelta(days=days_to_monday)
+    next_week = [
+        next_monday + timedelta(days=i)
+        for i in range(7)
+    ]
+
+    for d in current_week:
         b.button(
             text=d.strftime("%d.%m"),
             callback_data=f"o_date:{d.isoformat()}"
         )
 
-    b.button(text="➡️ Следующая неделя", callback_data="o_cal:next")
-    b.button(text="🐢 В течение месяца", callback_data="o_date:month")
+    b.adjust(3)
+
+    for d in next_week:
+        b.button(
+            text=d.strftime("%d.%m"),
+            callback_data=f"o_date:{d.isoformat()}"
+        )
+
+    b.button(
+        text="🐢 В течение месяца",
+        callback_data="o_date:month"
+    )
 
     b.adjust(3)
+
     return b.as_markup()
 
 

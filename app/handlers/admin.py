@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import load_config
-from ..models import User, Request, Offer, Match
+from ..models import User, Request, Offer, Match, TripRequest, TripOffer, TripMatch
 
 router = Router()
 
@@ -53,12 +53,29 @@ async def stats(m: Message, session: AsyncSession):
         select(func.count(Match.id))
     )).scalar() or 0
 
+    trip_req_cnt = (await session.execute(
+        select(func.count(TripRequest.id))
+    )).scalar() or 0
+
+    trip_off_cnt = (await session.execute(
+        select(func.count(TripOffer.id))
+    )).scalar() or 0
+
+    trip_match_cnt = (await session.execute(
+        select(func.count(TripMatch.id))
+    )).scalar() or 0
+
     await m.answer(
         "📊 PASO статистика\n\n"
         f"👥 Пользователей: {users_cnt}\n"
-        f"📦 Заявок: {req_cnt}\n"
-        f"🧳 Поездок: {off_cnt}\n"
-        f"🤝 Matches: {match_cnt}"
+        "📦 Посылки\n"
+        f"├ Заявок: {req_cnt}\n"
+        f"├ Предложений: {off_cnt}\n"
+        f"└ Совпадений: {match_cnt}\n\n"
+        "🚗 Поездки\n"
+        f"├ Запросов: {trip_req_cnt}\n"
+        f"├ Предложений: {trip_off_cnt}\n"
+        f"└ Совпадений: {trip_match_cnt}"
     )
 
 
@@ -92,6 +109,18 @@ async def admin_stats_callback(
         select(func.count(Match.id))
     )).scalar() or 0
 
+    trip_req_cnt = (await session.execute(
+        select(func.count(TripRequest.id))
+    )).scalar() or 0
+
+    trip_off_cnt = (await session.execute(
+        select(func.count(TripOffer.id))
+    )).scalar() or 0
+
+    trip_match_cnt = (await session.execute(
+        select(func.count(TripMatch.id))
+    )).scalar() or 0
+
     # =========================
     # NEW USERS
     # =========================
@@ -119,9 +148,14 @@ async def admin_stats_callback(
         f"👥 Пользователей: {users_cnt}\n"
         f"└ +{new_today} сегодня / +{new_week} за неделю\n\n"
 
-        f"📦 Заявок: {req_cnt}\n"
-        f"🧳 Поездок: {off_cnt}\n"
-        f"🤝 Matches: {match_cnt}"
+        "📦 Посылки\n"
+        f"├ Заявок: {req_cnt}\n"
+        f"├ Предложений: {off_cnt}\n"
+        f"└ Совпадений: {match_cnt}\n\n"
+        "🚗 Поездки\n"
+        f"├ Запросов: {trip_req_cnt}\n"
+        f"├ Предложений: {trip_off_cnt}\n"
+        f"└ Совпадений: {trip_match_cnt}"
     )
 
     await cq.answer()

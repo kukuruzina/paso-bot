@@ -38,23 +38,6 @@ def kb_popular_cities_INLINE(exclude: str | None = None):
     return kb.as_markup()
 
 
-def kb_trip_cities(exclude: str | None = None):
-    kb = InlineKeyboardBuilder()
-    for city in POPULAR_CITIES:
-        if exclude and city == exclude:
-            continue
-        kb.button(
-            text=city,
-            callback_data=f"trip_city:{city}",
-        )
-    kb.button(
-        text="✏️ Другое",
-        callback_data="trip_city:other",
-    )
-    kb.adjust(2)
-    return kb.as_markup()
-
-
 # =========================================================
 # MAIN MENU
 # =========================================================
@@ -140,50 +123,6 @@ def kb_trips():
 
     return b.as_markup()
 
-
-
-
-def kb_trip_departure_time():
-    b = InlineKeyboardBuilder()
-    b.button(text="⏰ Указать время", callback_data="trip_departure_time:set")
-    b.button(text="🤝 По договорённости", callback_data="trip_departure_time:any")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def kb_trip_offer_seats():
-    b = InlineKeyboardBuilder()
-    for seats in range(1, 6):
-        label = "5+" if seats == 5 else str(seats)
-        b.button(text=label, callback_data=f"trip_offer_seats:{seats}")
-    b.adjust(5)
-    return b.as_markup()
-
-
-def kb_trip_price_mode():
-    b = InlineKeyboardBuilder()
-    b.button(text="🆓 Бесплатно", callback_data="trip_price:free")
-    b.button(text="🤝 По договорённости", callback_data="trip_price:negotiable")
-    b.button(text="💰 Фиксированная цена", callback_data="trip_price:fixed")
-    b.adjust(1)
-    return b.as_markup()
-
-
-
-def kb_trip_currency():
-    b = InlineKeyboardBuilder()
-    for currency in ("EUR", "CZK", "USD", "RUB"):
-        b.button(text=currency, callback_data=f"trip_currency:{currency}")
-    b.button(text="✏️ Другая", callback_data="trip_currency:other")
-    b.adjust(2)
-    return b.as_markup()
-
-def kb_trip_match(match_id: int):
-    b = InlineKeyboardBuilder()
-    b.button(text="👀 Посмотреть совпадение", callback_data=f"trip_match:view:{match_id}")
-    b.button(text="📞 Открыть контакт", callback_data=f"trip_match:contact:{match_id}")
-    b.adjust(1)
-    return b.as_markup()
 
 def kb_trip_back():
     b = InlineKeyboardBuilder()

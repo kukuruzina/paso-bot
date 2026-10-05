@@ -7,6 +7,7 @@ from .match_flow import router as match_router
 from .admin import router as admin_router
 from .profile import router as profile_router
 from .feedback import router as feedback_router
+from .trip_flow import router as trip_router
 
 
 def all_routers():
@@ -18,8 +19,7 @@ def all_routers():
         offer_router,
         match_router,
         profile_router,
-        admin_router,   # если используешь
+        admin_router,
         feedback_router,
+        trip_router,
     ]
-
-

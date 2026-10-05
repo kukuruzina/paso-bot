@@ -62,7 +62,7 @@ def request_to_range(time_type: str):
         )
 
     # 📅 1–2 недели
-    elif time_type in ("week2", "week_1_2"):
+    elif time_type == "week2":
         return (
             today + timedelta(days=7),
             today + timedelta(days=14)
@@ -280,17 +280,18 @@ def format_request_text(req: Request, user: User | None, transport_type: str | N
 
 @router.callback_query(F.data == "go:req")
 async def start_request(cq: CallbackQuery, state: FSMContext):
+
     await state.clear()
     await state.set_state(RequestFSM.from_city)
 
-    msg = await cq.message.answer(
+    await cq.message.answer(
         "📦 Отправить посылку\n\n"
-        "Шаг 1 из 7\n\n"
-        "📍 Откуда?",
+        "1/6 Откуда? Выберите из популярных направлений или введите свое:",
         reply_markup=kb_popular_cities_INLINE(),
     )
-    await state.update_data(form_message_id=msg.message_id)
+
     await cq.answer()
+
 
 # =========================================================
 # INLINE POPULAR CITIES
@@ -310,15 +311,9 @@ async def select_from_city(
     await state.update_data(from_city=city)
     await state.set_state(RequestFSM.to_city)
 
-    data = await state.get_data()
-    await render_request_step(
-        cq.bot,
-        cq.message.chat.id,
-        data["form_message_id"],
-        "📦 Отправить посылку\n\n"
-        "Шаг 2 из 7\n\n"
-        "📍 Куда?",
-        kb_popular_cities_INLINE(exclude=city),
+    await cq.message.answer(
+        "2/6 Куда? Выберите из популярных направлений или введите свое:",
+        reply_markup=kb_popular_cities_INLINE(exclude=city),
     )
 
     await cq.answer()
@@ -332,20 +327,17 @@ async def select_to_city(
     cq: CallbackQuery,
     state: FSMContext
 ):
+
     city = cq.data.split(":")[1]
+
     await state.update_data(to_city=city)
     await state.set_state(RequestFSM.category)
 
-    data = await state.get_data()
-    await render_request_step(
-        cq.bot,
-        cq.message.chat.id,
-        data["form_message_id"],
-        "📦 Отправить посылку\n\n"
-        "Шаг 3 из 7\n\n"
-        "📦 Что отправляете?",
-        kb_category(),
+    await cq.message.answer(
+        "3/6 Категория:",
+        reply_markup=kb_category(),
     )
+
     await cq.answer()
 
 
@@ -358,51 +350,46 @@ async def step_from_city(
     m: Message,
     state: FSMContext
 ):
+
     if m.text and m.text.startswith("/"):
         await state.clear()
         return
 
     city = norm(m.text)
+
     if not city or len(city) < 3:
         return await m.answer("Введите корректный город")
 
     await state.update_data(from_city=city)
     await state.set_state(RequestFSM.to_city)
 
-    data = await state.get_data()
-    await render_request_step(
-        m.bot,
-        m.chat.id,
-        data["form_message_id"],
-        "📦 Отправить посылку\n\n"
-        "Шаг 2 из 7\n\n"
-        "📍 Куда?",
-        kb_popular_cities_INLINE(exclude=city),
+    await m.answer(
+        "2/6 Куда?",
+        reply_markup=kb_popular_cities_INLINE(exclude=city),
     )
 
 
 @router.message(RequestFSM.to_city)
-async def step_to_city(m: Message, state: FSMContext):
+async def step_to_city(
+        m: Message,
+        state: FSMContext
+):
+
     if m.text and m.text.startswith("/"):
         await state.clear()
         return
 
     city = norm(m.text)
+
     if not city or len(city) < 3:
         return await m.answer("Введите корректный город")
 
     await state.update_data(to_city=city)
     await state.set_state(RequestFSM.category)
 
-    data = await state.get_data()
-    await render_request_step(
-        m.bot,
-        m.chat.id,
-        data["form_message_id"],
-        "📦 Отправить посылку\n\n"
-        "Шаг 3 из 7\n\n"
-        "📦 Что отправляете?",
-        kb_category(),
+    await m.answer(
+        "3/6 Категория:",
+        reply_markup=kb_category(),
     )
 
 
@@ -411,6 +398,7 @@ async def step_category(
     cq: CallbackQuery,
     state: FSMContext
 ):
+
     mp = {
         "1": Category.clothes,
         "2": Category.cosmetics,
@@ -422,73 +410,77 @@ async def step_category(
     await state.update_data(
         category=mp[cq.data.split(":")[1]].value
     )
+
     await state.set_state(RequestFSM.transport_type)
 
-    data = await state.get_data()
-    await render_request_step(
-        cq.bot,
-        cq.message.chat.id,
-        data["form_message_id"],
-        "📦 Отправить посылку\n\n"
-        "Шаг 4 из 7\n\n"
-        "🚚 Какой транспорт?",
-        kb_transport(),
+    await cq.message.answer(
+        "4/6 Какой транспорт?",
+        reply_markup=kb_transport(),
     )
+
     await cq.answer()
 
 
 @router.callback_query(F.data.startswith("t2:"))
-async def step_transport(cq: CallbackQuery,state:FSMContext):
-    await state.update_data(transport_type=cq.data.split(":")[1]);await state.set_state(RequestFSM.weight_band);d=await state.get_data();await render_request_step(cq.bot,cq.message.chat.id,d["form_message_id"],"📦 Отправить посылку\n\nШаг 5 из 7\n\n⚖️ Какой вес?",kb_weight());await cq.answer()
+async def step_transport(
+        cq: CallbackQuery,
+        state: FSMContext
+):
+
+    await state.update_data(transport_type=cq.data.split(":")[1])
+
+    # 🔥 потом вес
+    await state.set_state(RequestFSM.weight_band)
+    await cq.message.answer("5/6 Вес:", reply_markup=kb_weight())
+    await cq.answer()
 
 
 @router.callback_query(F.data.startswith("w:"))
-async def step_weight(cq: CallbackQuery,state:FSMContext):
-    mp={"1":WeightBand.lt1,"2":WeightBand.w1_3,"3":WeightBand.w3_5,"4":WeightBand.gt5};await state.update_data(weight_band=mp[cq.data.split(":")[1]].value);await state.set_state(RequestFSM.carry_type);d=await state.get_data();await render_request_step(cq.bot,cq.message.chat.id,d["form_message_id"],"📦 Отправить посылку\n\nШаг 6 из 7\n\n🧳 Как нужно перевезти?",kb_carry());await cq.answer()
+async def step_weight(cq: CallbackQuery, state: FSMContext):
+
+    await cq.answer()
+
+    mp = {
+        "1": WeightBand.lt1,
+        "2": WeightBand.w1_3,
+        "3": WeightBand.w3_5,
+        "4": WeightBand.gt5,
+    }
+
+    await state.update_data(weight_band=mp[cq.data.split(":")[1]].value)
+
+    # 🔥 потом carry
+    await state.set_state(RequestFSM.carry_type)
+    await cq.message.answer("6/6 Как нужно перевезти?", reply_markup=kb_carry())
+    await cq.answer()
 
 
 @router.callback_query(F.data.startswith("c:"))
-async def step_carry(cq: CallbackQuery,state:FSMContext):
-    mp={"1":CarryType.hand,"2":CarryType.luggage,"3":CarryType.any};await state.update_data(carry_type=mp[cq.data.split(":")[1]].value);await state.set_state(RequestFSM.time_type);d=await state.get_data();await render_request_step(cq.bot,cq.message.chat.id,d["form_message_id"],"📦 Отправить посылку\n\nШаг 7 из 7\n\n📅 Когда нужно?",kb_time());await cq.answer()
+async def step_carry(cq: CallbackQuery, state: FSMContext):
+    
+    await cq.answer()
+
+    mp = {
+        "1": "hand",
+        "2": "luggage",
+        "3": "any",
+    }
+
+    await state.update_data(carry_type=mp[cq.data.split(":")[1]])
+
+    await state.set_state(RequestFSM.time_type)
+    await cq.message.answer("Когда нужно?", reply_markup=kb_time())
+    await cq.answer()
 
 
 @router.callback_query(F.data.startswith("t:"))
 async def step_time(cq: CallbackQuery, state: FSMContext):
-    time_type = cq.data.split(":", 1)[1]
+    await state.update_data(time_type=cq.data.split(":")[1])
 
-    await state.update_data(time_type=time_type)
     await state.set_state(RequestFSM.confirm)
 
-    data = await state.get_data()
-
-    time_label = {
-        "soon": "⚡ Ближайшие дни",
-        "week_1_2": "📅 1–2 недели",
-        "month": "🐢 В течение месяца",
-    }.get(time_type, "⚡ Ближайшие дни")
-
-    transport_label = {
-        "plane": "✈️ Самолёт",
-        "car": "🚗 Машина",
-        "any": "👌 Не важно",
-    }.get(data.get("transport_type"), "👌 Не важно")
-
-    summary = (
-        "📦 Отправить посылку\n\n"
-        "Проверьте заявку:\n\n"
-        f"📍 {data.get('from_city')} → {data.get('to_city')}\n"
-        f"📅 {time_label}\n"
-        f"⚖️ {format_weight_label(data.get('weight_band'))}\n"
-        f"🧳 {format_carry_label(data.get('carry_type'))}\n"
-        f"🚚 {transport_label}\n\n"
-        f"{RULES_TEXT}\n\n"
-        "Всё верно?"
-    )
-
-    await cq.message.edit_text(
-        summary,
-        reply_markup=kb_confirm(),
-    )
+    await cq.message.answer(RULES_TEXT)
+    await cq.message.answer("👇", reply_markup=kb_confirm())
     await cq.answer()
 
 

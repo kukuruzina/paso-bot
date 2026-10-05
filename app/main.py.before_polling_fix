@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.session.aiohttp import AiohttpSession
+from aiohttp import ClientTimeout
 
 from app.config import load_config
 from app.handlers import all_routers
@@ -31,8 +31,7 @@ async def main():
     logger.info("✅ Database initialized")
 
     # 🔥 BOT timeout
-    session = AiohttpSession(timeout=120)
-    bot = Bot(token=cfg.bot_token, session=session)
+    bot = Bot(token=cfg.bot_token)
 
     dp = Dispatcher()
 
@@ -48,7 +47,7 @@ async def main():
 
     # 🔥 устойчивый polling (не падает при ошибках сети)
     try:
-        await dp.start_polling(bot, polling_timeout=30)
+        await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"❌ Polling crashed: {e}")
 
