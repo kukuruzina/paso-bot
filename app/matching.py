@@ -105,52 +105,60 @@ def calc_score(
 
     score = 50
 
-    # даты
-    if req.delivery_date_to:
+    # =====================================================
+    # DATE
+    # =====================================================
 
-        delta = (
-            req.delivery_date_to
-            - off.trip_date
-        ).days
+    if req.delivery_date_from and req.delivery_date_to:
 
-        if delta >= 0:
+        if req.delivery_date_from <= off.trip_date <= req.delivery_date_to:
+            score += 30
 
-            if delta == 0:
-                score += 25
+        elif off.trip_date <= req.delivery_date_to + timedelta(days=5):
+            days_after = (
+                off.trip_date - req.delivery_date_to
+            ).days
 
-            elif delta <= 3:
+            if days_after <= 1:
+                score += 20
+            elif days_after <= 3:
                 score += 15
-
-            elif delta <= 7:
+            else:
                 score += 10
 
-    # вес
-    if weight_covers(
-        off.capacity_band,
-        req.weight_band
-    ):
-        score += 10
+    # =====================================================
+    # TRANSPORT
+    # =====================================================
 
-    # transport bonus
+    req_transport = normalize_enum(
+        getattr(req, "transport_type", "any")
+    )
     off_transport = normalize_enum(
         getattr(off, "transport_type", "any")
     )
 
-    if off_transport == "any":
-        score += 1
-    else:
-        score += 3
+    if req_transport == "any":
+        score += 5
+    elif req_transport == off_transport:
+        score += 10
 
-    # рейтинг
+    # =====================================================
+    # RATING
+    # =====================================================
+
     if (
         offer_user
         and offer_user.rating_count
     ):
-        score += int(
-            offer_user.rating_avg * 2
+        score += min(
+            int(offer_user.rating_avg * 2),
+            10
         )
 
-    # premium
+    # =====================================================
+    # PREMIUM
+    # =====================================================
+
     if (
         offer_user
         and getattr(
@@ -159,7 +167,7 @@ def calc_score(
             False
         )
     ):
-        score += 15
+        score += 10
 
     return score
 
@@ -303,14 +311,13 @@ async def find_matches_for_offer(
         )
 
         # level
-        delta_days = abs(
-            (
-                match_date
-                - req.delivery_date_to
-            ).days
+        date_in_range = (
+            req.delivery_date_from
+            and req.delivery_date_to
+            and req.delivery_date_from <= match_date <= req.delivery_date_to
         )
 
-        if delta_days <= 3 and transport_ok:
+        if date_in_range and transport_ok:
             match_level = "best"
         else:
             match_level = "possible"
@@ -334,8 +341,29 @@ async def find_matches_for_offer(
         reverse=True
     )
 
-    if top_n:
-        candidates = candidates[:top_n]
+    # top_n applies only to NEW matches.
+    # Existing matches must not occupy the limit.
+    new_candidates = []
+
+    for req, score, match_level in candidates:
+        existing = await session.execute(
+            select(Match).where(
+                Match.request_id == req.id,
+                Match.offer_id == off.id,
+            )
+        )
+
+        if existing.scalar_one_or_none():
+            continue
+
+        new_candidates.append(
+            (req, score, match_level)
+        )
+
+        if top_n and len(new_candidates) >= top_n:
+            break
+
+    candidates = new_candidates
 
     created = []
 
@@ -453,14 +481,13 @@ async def find_matches_for_request(
         )
 
         # level
-        delta_days = abs(
-            (
-                off.trip_date
-                - req.delivery_date_to
-            ).days
+        date_in_range = (
+            req.delivery_date_from
+            and req.delivery_date_to
+            and req.delivery_date_from <= off.trip_date <= req.delivery_date_to
         )
 
-        if delta_days <= 3 and transport_ok:
+        if date_in_range and transport_ok:
             match_level = "best"
         else:
             match_level = "possible"
@@ -489,8 +516,29 @@ async def find_matches_for_request(
         reverse=True
     )
 
-    if top_n:
-        candidates = candidates[:top_n]
+    # top_n applies only to NEW matches.
+    # Existing matches must not occupy the limit.
+    new_candidates = []
+
+    for off, score, match_level in candidates:
+        existing = await session.execute(
+            select(Match).where(
+                Match.request_id == req.id,
+                Match.offer_id == off.id,
+            )
+        )
+
+        if existing.scalar_one_or_none():
+            continue
+
+        new_candidates.append(
+            (off, score, match_level)
+        )
+
+        if top_n and len(new_candidates) >= top_n:
+            break
+
+    candidates = new_candidates
 
     created = []
 
