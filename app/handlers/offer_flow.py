@@ -677,7 +677,7 @@ async def finish_offer(cq: CallbackQuery, state: FSMContext, session: AsyncSessi
         session,
         offer.id,
         window_days=0,
-        top_n=5
+        top_n=3
     )
 
     if not matches:
