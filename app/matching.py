@@ -315,6 +315,8 @@ async def find_matches_for_offer(
             req.transport_type,
             off.transport_type
         )
+        if not transport_ok:
+            continue
 
         # level
         date_in_range = (
@@ -491,6 +493,8 @@ async def find_matches_for_request(
             req.transport_type,
             off.transport_type
         )
+        if not transport_ok:
+            continue
 
         # level
         date_in_range = (
