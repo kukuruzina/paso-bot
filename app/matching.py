@@ -402,7 +402,6 @@ async def find_matches_for_offer(
 # =====================================================
 
 async def find_matches_for_request(
-    bot,
     session: AsyncSession,
     request_id: int,
     window_days: int,
