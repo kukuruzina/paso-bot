@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.paywall import can_access_contacts, spend_contact
+from app.matching import is_match_valid
 
 from ..models import Match, Request, Offer, User, Review
 from ..enums import MatchStatus, RowStatus
@@ -208,12 +209,26 @@ async def open_contact(cq: CallbackQuery, session: AsyncSession):
         await cq.message.answer(PAYWALL_TEXT)
         return
 
-    # 💸 списание контакта
-    await spend_contact(session, user)
-
     # 📦 данные сделки
     req = await session.get(Request, match.request_id)
     off = await session.get(Offer, match.offer_id)
+
+    if not req or not off:
+        return await cq.answer(
+            "Матч больше недоступен",
+            show_alert=True,
+        )
+
+    # 🛡️ Повторно проверяем актуальность Match.
+    # Старые Match могли быть созданы по предыдущим правилам.
+    if not is_match_valid(req, off):
+        return await cq.answer(
+            "Этот матч больше не соответствует условиям",
+            show_alert=True,
+        )
+
+    # 💸 списание контакта — только после успешной проверки Match
+    await spend_contact(session, user)
 
     req_user = await session.get(User, req.user_id)
     off_user = await session.get(User, off.user_id)

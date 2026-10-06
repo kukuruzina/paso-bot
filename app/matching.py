@@ -93,6 +93,103 @@ def city_match(a: str | None, b: str | None) -> bool:
 
 
 # =====================================================
+# CURRENT MATCH VALIDATION
+# =====================================================
+
+def is_match_valid(
+    req: Request,
+    off: Offer,
+) -> bool:
+    """
+    Проверяет, соответствует ли существующая пара
+    текущим правилам matching.
+
+    Используется перед выдачей контакта для старых Match,
+    которые могли быть созданы по предыдущим правилам.
+    """
+
+    # Только актуальные объекты участвуют в matching.
+    if req.status != RowStatus.active:
+        return False
+
+    if off.status != RowStatus.active:
+        return False
+
+    # Нельзя сопоставлять пользователя с самим собой.
+    if req.user_id == off.user_id:
+        return False
+
+    # -------------------------------------------------
+    # ROUTE
+    # -------------------------------------------------
+    req_from = norm(req.from_city)
+    off_from = norm(off.from_city)
+    req_to = norm(req.to_city)
+    off_to = norm(off.to_city)
+
+    from_ok = (
+        city_match(req_from, off_from)
+        or city_in_country(off_from, req_from)
+        or city_in_country(req_from, off_from)
+    )
+
+    to_ok = (
+        city_match(req_to, off_to)
+        or city_in_country(off_to, req_to)
+        or city_in_country(req_to, off_to)
+    )
+
+    if not from_ok or not to_ok:
+        return False
+
+    # -------------------------------------------------
+    # DATE
+    # -------------------------------------------------
+    match_date = off.trip_date
+
+    if (
+        req.delivery_date_from
+        and match_date < req.delivery_date_from
+    ):
+        return False
+
+    if (
+        req.delivery_date_to
+        and match_date > req.delivery_date_to + timedelta(days=5)
+    ):
+        return False
+
+    # -------------------------------------------------
+    # WEIGHT
+    # -------------------------------------------------
+    if not weight_covers(
+        off.capacity_band,
+        req.weight_band,
+    ):
+        return False
+
+    # -------------------------------------------------
+    # BAGGAGE
+    # -------------------------------------------------
+    if not baggage_compatible(
+        req.carry_type,
+        off.baggage_type,
+    ):
+        return False
+
+    # -------------------------------------------------
+    # TRANSPORT
+    # -------------------------------------------------
+    if not transport_compatible(
+        req.transport_type,
+        off.transport_type,
+    ):
+        return False
+
+    return True
+
+
+# =====================================================
 # SCORE
 # =====================================================
 
