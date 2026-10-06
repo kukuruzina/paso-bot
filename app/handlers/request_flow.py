@@ -465,7 +465,7 @@ async def step_weight(cq: CallbackQuery,state:FSMContext):
 
 @router.callback_query(F.data.startswith("c:"))
 async def step_carry(cq: CallbackQuery,state:FSMContext):
-    mp={"1":CarryType.hand,"2":CarryType.luggage,"3":CarryType.any};await state.update_data(carry_type=mp[cq.data.split(":")[1]].value);await state.set_state(RequestFSM.time_type);d=await state.get_data();await render_request_step(cq.bot,cq.message.chat.id,d["form_message_id"],"📦 Отправить посылку\n\nШаг 7 из 7\n\n📅 Когда нужно?",kb_time());await cq.answer()
+    mp={"1":CarryType.hand_only,"2":CarryType.luggage_ok,"3":CarryType.any};await state.update_data(carry_type=mp[cq.data.split(":")[1]].value);await state.set_state(RequestFSM.time_type);d=await state.get_data();await render_request_step(cq.bot,cq.message.chat.id,d["form_message_id"],"📦 Отправить посылку\n\nШаг 7 из 7\n\n📅 Когда нужно?",kb_time());await cq.answer()
 
 
 @router.callback_query(F.data.startswith("t:"))
