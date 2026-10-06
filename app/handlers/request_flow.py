@@ -276,6 +276,22 @@ def format_request_text(req: Request, user: User | None, transport_type: str | N
         return "📦 Ошибка отображения заявки"
 
 
+
+async def render_request_step(
+    bot,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    reply_markup,
+):
+    await bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=message_id,
+        text=text,
+        reply_markup=reply_markup,
+    )
+
+
 # ================= FLOW =================
 
 @router.callback_query(F.data == "go:req")
