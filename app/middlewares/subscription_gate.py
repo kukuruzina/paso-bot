@@ -41,6 +41,7 @@ class SubscriptionGateMiddleware(BaseMiddleware):
                 "go:off",
 
                 # request flow
+                "city:",
                 "cat:",
                 "w:",
                 "c:",
