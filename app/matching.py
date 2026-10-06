@@ -47,7 +47,6 @@ def weight_covers(offer_band, req_band) -> bool:
 # =====================================================
 
 def baggage_compatible(req_carry, off_baggage) -> bool:
-
     req = normalize_enum(req_carry)
     off = normalize_enum(off_baggage)
 
@@ -55,12 +54,12 @@ def baggage_compatible(req_carry, off_baggage) -> bool:
     if req == "any":
         return True
 
-    # ручная кладь
-    if req == "hand":
-        return True
+    # ручная кладь: поддерживаем старый и новый Request формат
+    if req in {"hand", "hand_only"}:
+        return off == "hand"
 
-    # нужен багаж
-    if req == "luggage":
+    # багаж: поддерживаем старый и новый Request формат
+    if req in {"luggage", "luggage_ok"}:
         return off == "luggage"
 
     return False
