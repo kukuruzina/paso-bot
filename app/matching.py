@@ -297,6 +297,13 @@ async def find_matches_for_offer(
         ):
             continue
 
+        # weight
+        if not weight_covers(
+            off.capacity_band,
+            req.weight_band
+        ):
+            continue
+
         # carry
         if not baggage_compatible(
             req.carry_type,
@@ -464,6 +471,13 @@ async def find_matches_for_request(
         if (
             req.delivery_date_to
             and off.trip_date > req.delivery_date_to + timedelta(days=5)
+        ):
+            continue
+
+        # weight
+        if not weight_covers(
+            off.capacity_band,
+            req.weight_band
         ):
             continue
 
