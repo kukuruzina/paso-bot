@@ -345,8 +345,11 @@ async def find_matches_for_offer(
         )
 
     candidates.sort(
-        key=lambda x: x[1],
-        reverse=True
+        key=lambda x: (
+            -x[1],
+            x[0].delivery_date_from,
+            x[0].id,
+        )
     )
 
     # top_n applies only to NEW matches.
@@ -528,8 +531,11 @@ async def find_matches_for_request(
         )
 
     candidates.sort(
-        key=lambda x: x[1],
-        reverse=True
+        key=lambda x: (
+            -x[1],
+            x[0].trip_date,
+            x[0].id,
+        )
     )
 
     # top_n applies only to NEW matches.
