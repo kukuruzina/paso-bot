@@ -11,7 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.paywall import can_access_contacts, spend_contact, spend_contact_no_commit
+from app.services.paywall import can_access_contacts, spend_contact_no_commit
 from app.matching import is_match_valid
 
 from ..models import Match, MatchContactOpen, Request, Offer, User, Review
@@ -74,10 +74,6 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
     )
     user = user_res.scalar_one_or_none()
 
-    if not user or not await can_access_contacts(session, user):
-        await cq.answer("Нужен доступ", show_alert=True)
-        await cq.message.answer(PAYWALL_TEXT)
-        return
 
     # Lock the match row so concurrent callbacks cannot both process it.
     match = await session.get(
@@ -163,10 +159,6 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
     )
     user = user_res.scalar_one_or_none()
 
-    if not user or not await can_access_contacts(session, user):
-        await cq.answer("Нужен доступ", show_alert=True)
-        await cq.message.answer(PAYWALL_TEXT)
-        return
 
     # Lock the match row so only one accept callback can succeed.
     match = await session.get(
