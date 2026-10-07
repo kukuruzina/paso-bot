@@ -80,8 +80,6 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
         await cq.message.answer(PAYWALL_TEXT)
         return
 
-    await spend_contact(session, user)
-
     if not match or match.status != MatchStatus.proposed:
         await cq.answer("Сделка уже обработана", show_alert=True)
         return
@@ -89,8 +87,25 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
     offer = await session.get(Offer, match.offer_id)
     req = await session.get(Request, match.request_id)
 
+    if not req or not offer:
+        await cq.answer("Матч больше недоступен", show_alert=True)
+        return
+
+    if not is_match_valid(req, offer):
+        await cq.answer(
+            "Этот матч больше не соответствует условиям",
+            show_alert=True,
+        )
+        return
+
     offer_user = await session.get(User, offer.user_id)
     req_user = await session.get(User, req.user_id)
+
+    if not offer_user or not req_user:
+        await cq.answer("Участник сделки больше недоступен", show_alert=True)
+        return
+
+    await spend_contact(session, user)
 
     match.status = MatchStatus.pending
     await session.commit()
@@ -142,8 +157,6 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
         await cq.message.answer(PAYWALL_TEXT)
         return
 
-    await spend_contact(session, user)
-
     if not match or match.status != MatchStatus.pending:
         await cq.answer("Сделка уже обработана", show_alert=True)
         return
@@ -151,8 +164,25 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
     req = await session.get(Request, match.request_id)
     offer = await session.get(Offer, match.offer_id)
 
+    if not req or not offer:
+        await cq.answer("Матч больше недоступен", show_alert=True)
+        return
+
+    if not is_match_valid(req, offer):
+        await cq.answer(
+            "Этот матч больше не соответствует условиям",
+            show_alert=True,
+        )
+        return
+
     req_user = await session.get(User, req.user_id)
     offer_user = await session.get(User, offer.user_id)
+
+    if not req_user or not offer_user:
+        await cq.answer("Участник сделки больше недоступен", show_alert=True)
+        return
+
+    await spend_contact(session, user)
 
     cfg = load_config()
     if not cfg.deals_chat_id:
