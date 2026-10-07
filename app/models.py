@@ -525,6 +525,40 @@ class Match(Base):
 
 
 # =========================================================
+# MATCH CONTACT OPENS — PARCELS
+# =========================================================
+
+class MatchContactOpen(Base):
+    __tablename__ = "match_contact_opens"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "match_id",
+            "user_id",
+            name="uq_match_contact_open",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    match_id: Mapped[int] = mapped_column(
+        ForeignKey("matches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+
+
+# =========================================================
 # TRIP REQUESTS
 # =========================================================
 

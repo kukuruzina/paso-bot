@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.paywall import can_access_contacts, spend_contact, spend_contact_no_commit
 from app.matching import is_match_valid
 
-from ..models import Match, Request, Offer, User, Review
+from ..models import Match, MatchContactOpen, Request, Offer, User, Review
 from ..enums import MatchStatus, RowStatus
 from ..config import load_config
 
@@ -343,8 +343,24 @@ async def open_contact(cq: CallbackQuery, session: AsyncSession):
             f"🔗 @{other.tg_username.lstrip('@')}"
         )
 
-    # Spend and persist the contact access in one DB transaction.
-    await spend_contact_no_commit(session, user)
+    # Charge only the first contact opening for this user on this Match.
+    contact_open_res = await session.execute(
+        select(MatchContactOpen).where(
+            MatchContactOpen.match_id == match.id,
+            MatchContactOpen.user_id == user.id,
+        )
+    )
+    contact_open = contact_open_res.scalar_one_or_none()
+
+    if contact_open is None:
+        session.add(
+            MatchContactOpen(
+                match_id=match.id,
+                user_id=user.id,
+            )
+        )
+        await spend_contact_no_commit(session, user)
+
     await session.commit()
 
     await cq.answer("Контакт открыт ✅")
