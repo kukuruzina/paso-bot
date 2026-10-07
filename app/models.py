@@ -722,6 +722,39 @@ class TripOffer(Base):
 
 
 # =========================================================
+# TRIP MATCH CONTACT OPENS
+# =========================================================
+
+class TripMatchContactOpen(Base):
+    __tablename__ = "trip_match_contact_opens"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "trip_match_id",
+            "user_id",
+            name="uq_trip_match_contact_open",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    trip_match_id: Mapped[int] = mapped_column(
+        ForeignKey("trip_matches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+
+# =========================================================
 # TRIP MATCHES
 # =========================================================
 

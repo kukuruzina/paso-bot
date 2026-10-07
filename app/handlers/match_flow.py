@@ -122,8 +122,7 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
         )
         return
 
-    # Spend and status transition are committed together.
-    await spend_contact_no_commit(session, user)
+    # Status transition is committed without spending a contact.
     match.status = MatchStatus.pending
     await session.commit()
 
@@ -235,8 +234,7 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
         text="🧩 Новая сделка PASO",
     )
 
-    # Spend contact and finalize the match in one DB transaction.
-    await spend_contact_no_commit(session, user)
+    # Finalize the match in one DB transaction.
     match.status = MatchStatus.accepted
     req.status = RowStatus.closed
     await session.commit()

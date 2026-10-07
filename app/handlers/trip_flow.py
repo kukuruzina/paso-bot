@@ -14,9 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.models import User, TripRequest, TripOffer, TripMatch
+from app.models import User, TripRequest, TripOffer, TripMatch, TripMatchContactOpen
 from app.keyboards import kb_trips, kb_trip_back, kb_trip_cities, kb_trip_match, kb_trip_departure_time, kb_trip_offer_seats, kb_trip_price_mode, kb_trip_currency
-from app.services.paywall import can_access_contacts, spend_contact
+from app.services.paywall import can_access_contacts, spend_contact_no_commit
 
 from app.trip_matching import (
     find_matches_for_trip_request,
@@ -1891,9 +1891,25 @@ async def trip_match_contact(callback: CallbackQuery):
             await callback.message.answer(PAYWALL_TEXT)
             return
 
-        # Списываем контакт только по существующей логике paywall.
-        # При активной подписке spend_contact ничего не списывает.
-        await spend_contact(session, current_user)
+        # Списываем контакт только при первом открытии этого TripMatch
+        # этим пользователем. Повторные открытия бесплатны.
+        contact_open_res = await session.execute(
+            select(TripMatchContactOpen).where(
+                TripMatchContactOpen.trip_match_id == match.id,
+                TripMatchContactOpen.user_id == current_user.id,
+            )
+        )
+        contact_open = contact_open_res.scalar_one_or_none()
+
+        if contact_open is None:
+            session.add(
+                TripMatchContactOpen(
+                    trip_match_id=match.id,
+                    user_id=current_user.id,
+                )
+            )
+            await spend_contact_no_commit(session, current_user)
+            await session.commit()
 
         other_user = (
             match.offer.user
