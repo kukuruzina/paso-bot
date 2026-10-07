@@ -38,18 +38,18 @@ async def can_access_contacts(session, user) -> bool:
 
     return False
 
-
-async def spend_contact(session, user):
-
+async def spend_contact_no_commit(session, user):
     # ADMIN BYPASS
     if user.is_admin:
         return
-
     if user.tg_user_id in cfg.admin_tg_ids:
         return
 
     # SPEND SINGLE CONTACT
     if (user.contacts_left or 0) > 0:
         user.contacts_left -= 1
-        await session.commit()
 
+
+async def spend_contact(session, user):
+    await spend_contact_no_commit(session, user)
+    await session.commit()

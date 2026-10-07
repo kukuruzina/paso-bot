@@ -11,7 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.paywall import can_access_contacts, spend_contact
+from app.services.paywall import can_access_contacts, spend_contact, spend_contact_no_commit
 from app.matching import is_match_valid
 
 from ..models import Match, Request, Offer, User, Review
@@ -68,7 +68,6 @@ def rating_keyboard(match_id: int):
 @router.callback_query(F.data.startswith("match:propose:"))
 async def propose_match(cq: CallbackQuery, session: AsyncSession):
     match_id = int(cq.data.split(":")[-1])
-    match = await session.get(Match, match_id)
 
     user_res = await session.execute(
         select(User).where(User.tg_user_id == cq.from_user.id)
@@ -79,6 +78,13 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
         await cq.answer("Нужен доступ", show_alert=True)
         await cq.message.answer(PAYWALL_TEXT)
         return
+
+    # Lock the match row so concurrent callbacks cannot both process it.
+    match = await session.get(
+        Match,
+        match_id,
+        with_for_update=True,
+    )
 
     if not match or match.status != MatchStatus.proposed:
         await cq.answer("Сделка уже обработана", show_alert=True)
@@ -102,18 +108,28 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
     req_user = await session.get(User, req.user_id)
 
     if not offer_user or not req_user:
-        await cq.answer("Участник сделки больше недоступен", show_alert=True)
+        await cq.answer(
+            "Участник сделки больше недоступен",
+            show_alert=True,
+        )
         return
 
-    await spend_contact(session, user)
+    # Only participants can trigger the match.
+    if user.id not in (req_user.id, offer_user.id):
+        await cq.answer(
+            "Вы не участвуете в этой сделке",
+            show_alert=True,
+        )
+        return
 
+    # Spend and status transition are committed together.
+    await spend_contact_no_commit(session, user)
     match.status = MatchStatus.pending
     await session.commit()
 
     await cq.message.edit_reply_markup(reply_markup=None)
     await cq.answer("Предложение отправлено ✅")
 
-    # 👉 карточка оффера (без циклического импорта)
     try:
         from app.handlers.request_flow import format_offer_text
         offer_text = format_offer_text(offer, offer_user)
@@ -121,13 +137,10 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
         print("format error:", e)
         offer_text = f"{offer.from_city} → {offer.to_city}"
 
-    # 👉 определяем кому отправлять
     if user.id == offer_user.id:
-        # исполнитель предлагает заказчику
         target_user = req_user
         text_prefix = "📦 Перевозчик предлагает выполнить ваш заказ:"
     else:
-        # заказчик предлагает исполнителю
         target_user = offer_user
         text_prefix = "📦 Заказчик предлагает вам заказ:"
 
@@ -145,7 +158,6 @@ async def propose_match(cq: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data.startswith("match:accept:"))
 async def accept_match(cq: CallbackQuery, session: AsyncSession):
     match_id = int(cq.data.split(":")[-1])
-    match = await session.get(Match, match_id)
 
     user_res = await session.execute(
         select(User).where(User.tg_user_id == cq.from_user.id)
@@ -156,6 +168,13 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
         await cq.answer("Нужен доступ", show_alert=True)
         await cq.message.answer(PAYWALL_TEXT)
         return
+
+    # Lock the match row so only one accept callback can succeed.
+    match = await session.get(
+        Match,
+        match_id,
+        with_for_update=True,
+    )
 
     if not match or match.status != MatchStatus.pending:
         await cq.answer("Сделка уже обработана", show_alert=True)
@@ -179,16 +198,27 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
     offer_user = await session.get(User, offer.user_id)
 
     if not req_user or not offer_user:
-        await cq.answer("Участник сделки больше недоступен", show_alert=True)
+        await cq.answer(
+            "Участник сделки больше недоступен",
+            show_alert=True,
+        )
         return
 
-    await spend_contact(session, user)
+    # Only participants can accept the match.
+    if user.id not in (req_user.id, offer_user.id):
+        await cq.answer(
+            "Вы не участвуете в этой сделке",
+            show_alert=True,
+        )
+        return
 
     cfg = load_config()
+
     if not cfg.deals_chat_id:
         await cq.answer("DEALS_CHAT_ID не настроен", show_alert=True)
         return
 
+    # Create the deal topic before spending the contact.
     try:
         thread_id, link = await create_deal_topic(
             bot=cq.bot,
@@ -205,12 +235,25 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
         text="🧩 Новая сделка PASO",
     )
 
-    # 👉 карточка оффера
-    try:
-        from app.handlers.request_flow import format_offer_text
-        offer_text = format_offer_text(offer, offer_user)
-    except Exception as e:
-        print("format error:", e)
+    # Spend contact and finalize the match in one DB transaction.
+    await spend_contact_no_commit(session, user)
+    match.status = MatchStatus.accepted
+    req.status = RowStatus.closed
+    await session.commit()
+
+    await cq.message.edit_reply_markup(reply_markup=None)
+    await cq.answer("Сделка подтверждена ✅")
+
+    # Send the deal link to both participants.
+    for target in (req_user, offer_user):
+        try:
+            await cq.bot.send_message(
+                target.tg_user_id,
+                f"💬 Чат сделки: {link}",
+            )
+        except Exception as e:
+            print(f"deal link send error for {target.tg_user_id}: {e}")
+
 
 
 # =========================================================
@@ -219,69 +262,97 @@ async def accept_match(cq: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.startswith("match:contact:"))
 async def open_contact(cq: CallbackQuery, session: AsyncSession):
-    await cq.answer()
-
     match_id = int(cq.data.split(":")[-1])
-    match = await session.get(Match, match_id)
 
-    if not match:
-        return await cq.message.answer("❌ Матч не найден")
-
-    # 👤 текущий пользователь
     user_res = await session.execute(
         select(User).where(User.tg_user_id == cq.from_user.id)
     )
     user = user_res.scalar_one_or_none()
 
-    # 🔒 PAYWALL
     if not user or not await can_access_contacts(session, user):
         await cq.answer("Нужен доступ", show_alert=True)
         await cq.message.answer(PAYWALL_TEXT)
         return
 
-    # 📦 данные сделки
+    # Lock the match row so concurrent callbacks cannot both spend a contact.
+    match = await session.get(
+        Match,
+        match_id,
+        with_for_update=True,
+    )
+    if not match:
+        await cq.answer("Матч не найден", show_alert=True)
+        return
+
+    # Contacts are available only after the deal is accepted.
+    if match.status != MatchStatus.accepted:
+        await cq.answer(
+            "Контакты доступны после подтверждения сделки",
+            show_alert=True,
+        )
+        return
+
     req = await session.get(Request, match.request_id)
     off = await session.get(Offer, match.offer_id)
 
     if not req or not off:
-        return await cq.answer(
-            "Матч больше недоступен",
-            show_alert=True,
-        )
+        await cq.answer("Матч больше недоступен", show_alert=True)
+        return
 
-    # 🛡️ Повторно проверяем актуальность Match.
-    # Старые Match могли быть созданы по предыдущим правилам.
+    # Re-check current matching rules before spending the contact.
     if not is_match_valid(req, off):
-        return await cq.answer(
+        await cq.answer(
             "Этот матч больше не соответствует условиям",
             show_alert=True,
         )
-
-    # 💸 списание контакта — только после успешной проверки Match
-    await spend_contact(session, user)
+        return
 
     req_user = await session.get(User, req.user_id)
     off_user = await session.get(User, off.user_id)
 
-    # 🔍 определяем, кому показывать контакт
-    if user.tg_user_id == req_user.tg_user_id:
+    if not req_user or not off_user:
+        await cq.answer(
+            "Участник сделки больше недоступен",
+            show_alert=True,
+        )
+        return
+
+    # Only participants can open a contact.
+    if user.id not in (req_user.id, off_user.id):
+        await cq.answer(
+            "Вы не участвуете в этой сделке",
+            show_alert=True,
+        )
+        return
+
+    if user.id == req_user.id:
         other = off_user
     else:
         other = req_user
 
-    # 📞 выдача контакта
-    contact_text = (
-        "📞 Контакт:\n\n"
-        f"👤 {other.first_name or 'Пользователь'}\n"
-        f"🔗 @{other.tg_username}\n"
-    )
+    if not other.tg_username:
+        contact_text = (
+            "📞 Контакт:\n\n"
+            f"👤 {other.first_name or 'Пользователь'}\n"
+            "🔗 Username не указан"
+        )
+    else:
+        contact_text = (
+            "📞 Контакт:\n\n"
+            f"👤 {other.first_name or 'Пользователь'}\n"
+            f"🔗 @{other.tg_username.lstrip('@')}"
+        )
 
+    # Spend and persist the contact access in one DB transaction.
+    await spend_contact_no_commit(session, user)
+    await session.commit()
+
+    await cq.answer("Контакт открыт ✅")
     await cq.message.answer(contact_text)
 
-    # 🔥 убираем кнопку после использования
     try:
         await cq.message.edit_reply_markup(reply_markup=None)
-    except:
+    except Exception:
         pass
 
 
@@ -296,11 +367,21 @@ async def deal_ok(
 ):
     match_id = int(cq.data.split(":")[-1])
 
-    match = await session.get(Match, match_id)
-
+    # Lock the match so two concurrent confirmations cannot race.
+    match = await session.get(
+        Match,
+        match_id,
+        with_for_update=True,
+    )
     if not match:
         return await cq.answer(
             "Сделка не найдена",
+            show_alert=True
+        )
+
+    if match.status != MatchStatus.accepted:
+        return await cq.answer(
+            "Сделка уже завершена или недоступна",
             show_alert=True
         )
 
@@ -310,8 +391,20 @@ async def deal_ok(
             User.tg_user_id == cq.from_user.id
         )
     )
+    user = result.scalar_one_or_none()
 
-    user = result.scalar_one()
+    if not user:
+        return await cq.answer(
+            "Пользователь не найден",
+            show_alert=True
+        )
+
+    # Только участник этой сделки может подтвердить её.
+    if user.id not in (match.request.user_id, match.offer.user_id):
+        return await cq.answer(
+            "Вы не участвуете в этой сделке",
+            show_alert=True
+        )
 
     # кто подтвердил сделку
     if user.id == match.request.user_id:
@@ -327,9 +420,7 @@ async def deal_ok(
         and
         match.carrier_result == "success"
     ):
-
-        match.status = "completed"
-
+        match.status = MatchStatus.completed
         await session.commit()
 
         await cq.message.answer(
@@ -341,7 +432,6 @@ async def deal_ok(
             match.request.user.tg_user_id,
             match.offer.user.tg_user_id
         ]:
-
             kb = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
@@ -365,7 +455,6 @@ async def deal_ok(
     await cq.message.answer(
         "⏳ Ждём подтверждение второго участника"
     )
-
     await cq.answer()
 
 
@@ -376,16 +465,46 @@ async def deal_fail(
 ):
     match_id = int(cq.data.split(":")[-1])
 
-    match = await session.get(Match, match_id)
-
+    # Lock the match so concurrent callbacks cannot race.
+    match = await session.get(
+        Match,
+        match_id,
+        with_for_update=True,
+    )
     if not match:
         return await cq.answer(
             "Сделка не найдена",
             show_alert=True
         )
 
-    match.status = "cancelled"
+    if match.status != MatchStatus.accepted:
+        return await cq.answer(
+            "Сделка уже завершена или недоступна",
+            show_alert=True
+        )
 
+    # Проверяем текущего пользователя.
+    result = await session.execute(
+        select(User).where(
+            User.tg_user_id == cq.from_user.id
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        return await cq.answer(
+            "Пользователь не найден",
+            show_alert=True
+        )
+
+    # Только участник этой сделки может её отменить.
+    if user.id not in (match.request.user_id, match.offer.user_id):
+        return await cq.answer(
+            "Вы не участвуете в этой сделке",
+            show_alert=True
+        )
+
+    match.status = MatchStatus.cancelled
     await session.commit()
 
     await cq.message.answer(

@@ -29,7 +29,10 @@ class RowStatus(str, Enum):
 
 
 class MatchStatus(str, Enum):
+    proposed = "proposed"
     pending = "pending"
     accepted = "accepted"
     rejected = "rejected"
+    completed = "completed"
+    cancelled = "cancelled"
 
