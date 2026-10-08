@@ -1849,6 +1849,7 @@ async def trip_match_contact(callback: CallbackQuery):
         result = await session.execute(
             select(TripMatch)
             .where(TripMatch.id == match_id)
+            .with_for_update()
             .options(
                 selectinload(TripMatch.request).selectinload(TripRequest.user),
                 selectinload(TripMatch.offer).selectinload(TripOffer.user),
