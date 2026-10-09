@@ -1846,6 +1846,29 @@ async def trip_match_contact(callback: CallbackQuery):
         return
 
     async with get_session() as session:
+        current_user = await get_user_by_tg_id(
+            session,
+            callback.from_user.id,
+        )
+        if current_user is None:
+            await callback.message.answer(
+                "Не удалось найти ваш профиль.\n\n"
+                "Нажмите /start и попробуйте снова."
+            )
+            return
+
+        user_lock_res = await session.execute(
+            select(User)
+            .where(User.id == current_user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        current_user = user_lock_res.scalar_one_or_none()
+        if current_user is None:
+            await callback.message.answer("Не удалось найти ваш профиль.")
+            return
+
+        # Lock order: User first, then TripMatch.
         result = await session.execute(
             select(TripMatch)
             .where(TripMatch.id == match_id)
@@ -1861,17 +1884,6 @@ async def trip_match_contact(callback: CallbackQuery):
             await callback.message.answer("Совпадение не найдено.")
             return
 
-        current_user = await get_user_by_tg_id(
-            session,
-            callback.from_user.id,
-        )
-
-        if current_user is None:
-            await callback.message.answer(
-                "Не удалось найти ваш профиль.\n\n"
-                "Нажмите /start и попробуйте снова."
-            )
-            return
 
         is_requester = match.request.user_id == current_user.id
         is_driver = match.offer.user_id == current_user.id
@@ -1881,15 +1893,6 @@ async def trip_match_contact(callback: CallbackQuery):
                 "Это совпадение вам не принадлежит.",
                 show_alert=True,
             )
-            return
-
-        # PAYWALL — та же логика, что и для посылок
-        if not await can_access_contacts(session, current_user):
-            await callback.answer(
-                "Нужен доступ",
-                show_alert=True,
-            )
-            await callback.message.answer(PAYWALL_TEXT)
             return
 
         # Списываем контакт только при первом открытии этого TripMatch
@@ -1903,6 +1906,13 @@ async def trip_match_contact(callback: CallbackQuery):
         contact_open = contact_open_res.scalar_one_or_none()
 
         if contact_open is None:
+            if not await can_access_contacts(session, current_user):
+                await callback.answer(
+                    "Нужен доступ",
+                    show_alert=True,
+                )
+                await callback.message.answer(PAYWALL_TEXT)
+                return
             session.add(
                 TripMatchContactOpen(
                     trip_match_id=match.id,

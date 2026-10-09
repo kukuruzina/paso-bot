@@ -258,10 +258,21 @@ async def open_contact(cq: CallbackQuery, session: AsyncSession):
         select(User).where(User.tg_user_id == cq.from_user.id)
     )
     user = user_res.scalar_one_or_none()
-
-    if not user or not await can_access_contacts(session, user):
+    if not user:
         await cq.answer("Нужен доступ", show_alert=True)
         await cq.message.answer(PAYWALL_TEXT)
+        return
+
+    # Serialize contact openings across all matches for this user.
+    user_lock_res = await session.execute(
+        select(User)
+        .where(User.id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    user = user_lock_res.scalar_one_or_none()
+    if not user:
+        await cq.answer("Не удалось найти профиль", show_alert=True)
         return
 
     # Lock the match row so concurrent callbacks cannot both spend a contact.
@@ -343,6 +354,10 @@ async def open_contact(cq: CallbackQuery, session: AsyncSession):
     contact_open = contact_open_res.scalar_one_or_none()
 
     if contact_open is None:
+        if not await can_access_contacts(session, user):
+            await cq.answer("Нужен доступ", show_alert=True)
+            await cq.message.answer(PAYWALL_TEXT)
+            return
         session.add(
             MatchContactOpen(
                 match_id=match.id,

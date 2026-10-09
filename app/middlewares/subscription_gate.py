@@ -52,6 +52,9 @@ class SubscriptionGateMiddleware(BaseMiddleware):
                 "date:",
                 "cal:",
                 "off:confirm_rules",
+                # Contact access is checked by contact handlers.
+                "match:contact:",
+                "trip_match:contact:",
             )
 
             if any(text.startswith(x) for x in allow_prefixes):

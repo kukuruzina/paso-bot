@@ -5,6 +5,7 @@ from aiogram.filters import Command
 import httpx
 
 from ..config import load_config
+from ..plans import PLANS, get_plan, format_plan_title
 
 router = Router()
 
@@ -13,27 +14,21 @@ router = Router()
 # КНОПКИ ТАРИФОВ
 # =========================
 def kb_plans():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🥉 Single — €2", callback_data="plan:single")],
-        [InlineKeyboardButton(text="🥈 Standard — €5.55", callback_data="plan:standard")],
-        [InlineKeyboardButton(text="🥇 Pro — €9", callback_data="plan:pro")],
-        [InlineKeyboardButton(text="💎 Premium — €14.5", callback_data="plan:premium")],
-    ])
+    rows = []
+    for key, plan in PLANS.items():
+        label = plan["title"] + " — €" + plan["price_eur"]
+        rows.append([InlineKeyboardButton(text=label, callback_data="plan:" + key)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # =========================
 # ЭКРАН ПОДПИСКИ
 # =========================
 async def render_subscription(message: Message):
-    await message.answer(
-        "💳 Подписка PASO\n\n"
-        "Выберите тариф:\n\n"
-        "🥉 Single — €2 (5 контактов)\n"
-        "🥈 Standard — €5.55 (14 дней доступа)\n"
-        "🥇 Pro — €9 (30 дней доступа)\n"
-        "💎 Premium — €14.5 (30 дней + приоритет)\n",
-        reply_markup=kb_plans(),
-    )
+    lines = ["💳 Подписка PASO", "", "Выберите тариф:", ""]
+    for plan in PLANS.values():
+        lines.append(plan["title"] + " — €" + plan["price_eur"] + " (" + plan["benefit"] + ")")
+    await message.answer(chr(10).join(lines), reply_markup=kb_plans())
 
 
 # =========================
@@ -41,33 +36,17 @@ async def render_subscription(message: Message):
 # =========================
 @router.callback_query(F.data.startswith("plan:"))
 async def select_plan(callback: CallbackQuery):
-    plan = callback.data.split(":")[1]
-
-    plan_titles = {
-        "single": "🥉 Single — €2 (5 контактов)",
-        "standard": "🥈 Standard — €5.55 (14 дней доступа)",
-        "pro": "🥇 Pro — €9 (30 дней доступа)",
-        "premium": "💎 Premium — €14.5 (30 дней + приоритет)",
-    }
-
-    text = (
-        "💳 Подписка PASO\n\n"
-        f"Вы выбрали:\n{plan_titles.get(plan)}\n\n"
-        "Выберите способ оплаты:"
-    )
-
+    plan = callback.data.split(":", 1)[1]
+    if get_plan(plan) is None:
+        await callback.answer("Неизвестный тариф", show_alert=True)
+        return
+    text = "💳 Подписка PASO\n\nВы выбрали:\n" + format_plan_title(plan) + "\n\nВыберите способ оплаты:"
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="🌍 Оплатить картой (Stripe)",
-            callback_data=f"pay_stripe:{plan}"
-        )],
-        [InlineKeyboardButton(
-            text="🇷🇺 Оплатить через YooKassa",
-            callback_data=f"pay_yk:{plan}"
-        )],
+        [InlineKeyboardButton(text="🌍 Оплатить картой (Stripe)", callback_data="pay_stripe:" + plan)],
+        [InlineKeyboardButton(text="🇷🇺 Оплатить через YooKassa", callback_data="pay_yk:" + plan)],
     ])
-
     await callback.message.answer(text, reply_markup=kb)
+    await callback.answer()
 
 
 # =========================
@@ -77,7 +56,10 @@ async def select_plan(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("pay_stripe:"))
 async def pay_stripe(callback: CallbackQuery):
 
-    plan = callback.data.split(":")[1]
+    plan = callback.data.split(":", 1)[1]
+    if get_plan(plan) is None:
+        await callback.answer("Неизвестный тариф", show_alert=True)
+        return
     cfg = load_config()
 
     try:
@@ -142,7 +124,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 async def pay_yk(callback: CallbackQuery):
     try:
         # извлекаем тариф
-        plan = callback.data.split(":")[1]
+        plan = callback.data.split(":", 1)[1]
+        if get_plan(plan) is None:
+            await callback.answer("Неизвестный тариф", show_alert=True)
+            return
 
         # создаём оплату
         url = await create_yookassa_payment(
