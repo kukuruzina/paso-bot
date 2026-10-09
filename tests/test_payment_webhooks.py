@@ -287,5 +287,167 @@ class PaymentWebhookTests(unittest.TestCase):
         fulfill_payment.assert_not_awaited()
 
 
+    def test_stripe_paid_invoice_uses_verified_subscription_data(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        event = {
+            "type": "invoice.paid",
+            "data": {"object": {"id": "in_test_only"}},
+        }
+        invoice = {
+            "id": "in_test_only",
+            "status": "paid",
+            "paid": True,
+            "subscription": "sub_test_only",
+            "amount_paid": 900,
+            "currency": "eur",
+        }
+        subscription = {
+            "metadata": {"tg_user_id": "123456789", "plan": "pro"},
+            "items": {
+                "data": [{
+                    "price": {
+                        "id": "price_test_pro",
+                        "unit_amount": 900,
+                        "currency": "eur",
+                        "recurring": {"interval": "month"},
+                    }
+                }]
+            },
+        }
+
+        db_session = object()
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=db_session)
+        session_context.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("app.stripe_server.STRIPE_WEBHOOK_SECRET", "whsec_test"),
+            patch("app.stripe_server.STRIPE_PRICES", {"pro": "price_test_pro"}),
+            patch("app.stripe_server.stripe.Webhook.construct_event", return_value=event),
+            patch("app.stripe_server.stripe.Invoice.retrieve", return_value=invoice),
+            patch(
+                "app.stripe_server.stripe.Subscription.retrieve",
+                return_value=subscription,
+            ) as retrieve_subscription,
+            patch("app.stripe_server.get_session", return_value=session_context),
+            patch(
+                "app.services.payment_fulfillment.fulfill_payment",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as fulfill_payment,
+        ):
+            response = self.client.post(
+                "/stripe/webhook",
+                content=b"{}",
+                headers={"stripe-signature": "test-signature"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True})
+        retrieve_subscription.assert_called_once_with(
+            "sub_test_only",
+            expand=["items.data.price"],
+        )
+        fulfill_payment.assert_awaited_once_with(
+            db_session,
+            provider="stripe",
+            external_id="in_test_only",
+            tg_user_id=123456789,
+            plan_key="pro",
+            amount_minor=900,
+            currency="EUR",
+        )
+
+    def test_stripe_invoice_amount_mismatch_does_not_fulfill(self):
+        from unittest.mock import AsyncMock, patch
+
+        event = {
+            "type": "invoice.paid",
+            "data": {"object": {"id": "in_test_mismatch"}},
+        }
+        invoice = {
+            "id": "in_test_mismatch",
+            "status": "paid",
+            "paid": True,
+            "subscription": "sub_test_only",
+            "amount_paid": 1,
+            "currency": "eur",
+        }
+        subscription = {
+            "metadata": {"tg_user_id": "123456789", "plan": "pro"},
+            "items": {
+                "data": [{
+                    "price": {
+                        "id": "price_test_pro",
+                        "unit_amount": 900,
+                        "currency": "eur",
+                        "recurring": {"interval": "month"},
+                    }
+                }]
+            },
+        }
+
+        with (
+            patch("app.stripe_server.STRIPE_WEBHOOK_SECRET", "whsec_test"),
+            patch("app.stripe_server.STRIPE_PRICES", {"pro": "price_test_pro"}),
+            patch("app.stripe_server.stripe.Webhook.construct_event", return_value=event),
+            patch("app.stripe_server.stripe.Invoice.retrieve", return_value=invoice),
+            patch(
+                "app.stripe_server.stripe.Subscription.retrieve",
+                return_value=subscription,
+            ),
+            patch("app.stripe_server.get_session") as get_session,
+            patch(
+                "app.services.payment_fulfillment.fulfill_payment",
+                new_callable=AsyncMock,
+            ) as fulfill_payment,
+        ):
+            response = self.client.post(
+                "/stripe/webhook",
+                content=b"{}",
+                headers={"stripe-signature": "test-signature"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Payment validation failed")
+        get_session.assert_not_called()
+        fulfill_payment.assert_not_awaited()
+
+    def test_stripe_unpaid_invoice_is_ignored(self):
+        from unittest.mock import patch
+
+        event = {
+            "type": "invoice.paid",
+            "data": {"object": {"id": "in_test_unpaid"}},
+        }
+        invoice = {
+            "id": "in_test_unpaid",
+            "status": "open",
+            "paid": False,
+            "subscription": "sub_test_only",
+            "amount_paid": 900,
+            "currency": "eur",
+        }
+
+        with (
+            patch("app.stripe_server.STRIPE_WEBHOOK_SECRET", "whsec_test"),
+            patch("app.stripe_server.stripe.Webhook.construct_event", return_value=event),
+            patch("app.stripe_server.stripe.Invoice.retrieve", return_value=invoice),
+            patch("app.stripe_server.stripe.Subscription.retrieve") as retrieve_subscription,
+            patch("app.stripe_server.get_session") as get_session,
+        ):
+            response = self.client.post(
+                "/stripe/webhook",
+                content=b"{}",
+                headers={"stripe-signature": "test-signature"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True})
+        retrieve_subscription.assert_not_called()
+        get_session.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
