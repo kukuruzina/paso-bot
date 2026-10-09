@@ -359,6 +359,84 @@ class PaymentWebhookTests(unittest.TestCase):
             currency="EUR",
         )
 
+    def test_stripe_duplicate_paid_invoice_uses_same_external_id(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        event = {
+            "type": "invoice.paid",
+            "data": {"object": {"id": "in_test_duplicate"}},
+        }
+        invoice = {
+            "id": "in_test_duplicate",
+            "status": "paid",
+            "paid": True,
+            "subscription": "sub_test_only",
+            "amount_paid": 900,
+            "currency": "eur",
+        }
+        subscription = {
+            "metadata": {"tg_user_id": "123456789", "plan": "pro"},
+            "items": {
+                "data": [{
+                    "price": {
+                        "id": "price_test_pro",
+                        "unit_amount": 900,
+                        "currency": "eur",
+                        "recurring": {"interval": "month"},
+                    }
+                }]
+            },
+        }
+
+        db_session = object()
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=db_session)
+        session_context.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("app.stripe_server.STRIPE_WEBHOOK_SECRET", "whsec_test"),
+            patch("app.stripe_server.STRIPE_PRICES", {"pro": "price_test_pro"}),
+            patch(
+                "app.stripe_server.stripe.Webhook.construct_event",
+                return_value=event,
+            ),
+            patch(
+                "app.stripe_server.stripe.Invoice.retrieve",
+                return_value=invoice,
+            ),
+            patch(
+                "app.stripe_server.stripe.Subscription.retrieve",
+                return_value=subscription,
+            ),
+            patch(
+                "app.stripe_server.get_session",
+                return_value=session_context,
+            ),
+            patch(
+                "app.services.payment_fulfillment.fulfill_payment",
+                new_callable=AsyncMock,
+                side_effect=[True, False],
+            ) as fulfill_payment,
+        ):
+            responses = [
+                self.client.post(
+                    "/stripe/webhook",
+                    content=b"{}",
+                    headers={"stripe-signature": "test-signature"},
+                )
+                for _ in range(2)
+            ]
+
+        for response in responses:
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"ok": True})
+
+        self.assertEqual(fulfill_payment.await_count, 2)
+        self.assertEqual(
+            [call.kwargs["external_id"] for call in fulfill_payment.await_args_list],
+            ["in_test_duplicate", "in_test_duplicate"],
+        )
+
     def test_stripe_invoice_amount_mismatch_does_not_fulfill(self):
         from unittest.mock import AsyncMock, patch
 
