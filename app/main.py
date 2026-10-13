@@ -48,6 +48,7 @@ async def main():
 
     cfg = load_config()
 
+
     engine = make_engine(cfg.database_url)
     session_factory = make_session_factory(engine)
 
@@ -57,27 +58,31 @@ async def main():
         token=cfg.bot_token,
         default=DefaultBotProperties(parse_mode="HTML"),
     )
+
     dp = Dispatcher(storage=MemoryStorage())
 
-    # ✅ ВАЖНО: подключаем сессию в каждый апдейт
+    # ✅ DB session в каждый апдейт
     dp.update.middleware(session_middleware(session_factory))
 
-    # ❗️Пока не включаем paywall middleware, чтобы не ломало запуск
-    # Если он нужен — включим позже, когда файл middleware точно готов.
-    # from app.middlewares.subscription_gate import SubscriptionGateMiddleware
-    # dp.update.middleware(SubscriptionGateMiddleware())
+    # ✅ Подключаем роутеры
+    routers = all_routers()
 
-    for router in all_routers():
-        dp.include_router(router)
+    print("📦 Подключаем роутеры:", routers, flush=True)
+
+    for r in routers:
+        dp.include_router(r)
 
     await on_startup(bot)
 
-    # важно: сбросить webhook, иначе polling может "молчать"
+    # ❗ важно для polling
     await bot.delete_webhook(drop_pending_updates=True)
 
     print("✅ Bot started (polling)...", flush=True)
+
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+

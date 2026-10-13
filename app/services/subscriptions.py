@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from contextlib import asynccontextmanager
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +11,11 @@ from ..models import Subscription
 async def has_active_subscription(session: AsyncSession, user_id: int) -> bool:
     """True если есть активная подписка с expires_at > сейчас."""
     now = datetime.utcnow()
+
+    user = await session.get(User, user_id)
+    if user and user.subscription_until and user.subscription_until > now:
+        return True
+
     q = (
         select(Subscription)
         .where(
@@ -22,6 +26,7 @@ async def has_active_subscription(session: AsyncSession, user_id: int) -> bool:
         .order_by(Subscription.expires_at.desc())
         .limit(1)
     )
+
     sub = (await session.execute(q)).scalar_one_or_none()
     return sub is not None
 
@@ -30,14 +35,16 @@ async def activate_subscription(
     session: AsyncSession,
     *,
     user_id: int,
-    duration_days: int,
-    source: str,
+    duration_days: int = 30,
+    source: str = "unknown",
+    bot=None,  # опционально для уведомления
 ) -> Subscription:
     """
     Создаёт/продлевает подписку:
     - если активная есть → продлеваем от max(now, expires_at)
     - иначе → начинаем от now
     """
+
     now = datetime.utcnow()
 
     q = (
@@ -49,11 +56,14 @@ async def activate_subscription(
         .order_by(Subscription.expires_at.desc())
         .limit(1)
     )
+
     current = (await session.execute(q)).scalar_one_or_none()
 
-    start_from = now
+    # 🔥 ключевая логика продления
     if current and current.expires_at and current.expires_at > now:
         start_from = current.expires_at
+    else:
+        start_from = now
 
     new_sub = Subscription(
         user_id=user_id,
@@ -67,6 +77,18 @@ async def activate_subscription(
     session.add(new_sub)
     await session.commit()
     await session.refresh(new_sub)
+
+    # ✅ уведомление пользователю (если передали bot)
+    if bot:
+        try:
+            await bot.send_message(
+                user_id,
+                "✅ Подписка активирована!\n\n"
+                f"Действует до: {new_sub.expires_at.strftime('%d.%m.%Y')}"
+            )
+        except Exception as e:
+            print("⚠️ Не удалось отправить сообщение:", e, flush=True)
+
     return new_sub
 
 
@@ -81,3 +103,5 @@ async def create_invite_link(bot, chat_id: int) -> str:
         creates_join_request=False,
     )
     return link.invite_link
+
+

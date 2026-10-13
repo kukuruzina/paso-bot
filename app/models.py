@@ -37,20 +37,29 @@ class User(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     blocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # ⭐️ рейтинг
+    # 👑 роли
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_premium_carrier: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # 📅 подписка (ускорение проверок)
+    subscription_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # ⭐ рейтинг
     rating_avg: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    # 👑 PREMIUM перевозчик
-    is_premium_carrier: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    max_item_value_eur: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 📊 сделки
+    deals_as_customer: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deals_as_carrier: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # 📊 статистика перевозок
     valuable_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cash_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     docs_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # 💰 лимит стоимости
+    max_item_value_eur: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 # =========================================================
@@ -77,7 +86,7 @@ class Subscription(Base):
 
 
 # =========================================================
-# REQUESTS (заявки)
+# REQUESTS
 # =========================================================
 
 class Request(Base):
@@ -114,11 +123,11 @@ class Request(Base):
 
     transit_allowed: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # 🔥 важно для paywall
     status: Mapped[str] = mapped_column(
-        String(16), default="active", nullable=False
+        String(16), default="draft", nullable=False
     )
 
-    # 🔎 Фильтр для байеров
     requires_premium: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -128,7 +137,7 @@ class Request(Base):
 
 
 # =========================================================
-# OFFERS (поездки)
+# OFFERS
 # =========================================================
 
 class Offer(Base):
@@ -162,8 +171,9 @@ class Offer(Base):
     )
     price_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
+    # 🔥 тоже draft
     status: Mapped[str] = mapped_column(
-        String(16), default="active", nullable=False
+        String(16), default="draft", nullable=False
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -250,7 +260,7 @@ class Review(Base):
     rating: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # дополнительные данные для premium-статистики
+    # 🔥 основа для premium
     value_band_eur: Mapped[int | None] = mapped_column(Integer, nullable=True)
     had_cash: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     had_docs: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -260,3 +270,4 @@ class Review(Base):
     match: Mapped[Match] = relationship()
     reviewer: Mapped[User] = relationship(foreign_keys=[reviewer_id])
     reviewed: Mapped[User] = relationship(foreign_keys=[reviewed_id])
+
